@@ -3,7 +3,7 @@ module vconsole-remote
 go 1.21
 
 require (
-	github.com/gorilla/websocket v1.5.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/labstack/echo/v4 v4.9.1
 )
 
