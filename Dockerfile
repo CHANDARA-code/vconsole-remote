@@ -18,7 +18,7 @@ COPY server/assets/ ./assets/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o vconsole-remote .
 
 # Stage 2: Minimal runtime
-FROM alpine:3.20 AS runner
+FROM alpine:3.24 AS runner
 
 LABEL org.opencontainers.image.title="vConsole Remote" \
       org.opencontainers.image.description="Remote debugging broker for mobile web apps" \
