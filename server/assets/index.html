@@ -28,6 +28,40 @@
         :root {
             --font-family: 'Inter', 'Kantumruy Pro', 'KantumruyPro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             --font-family-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+            /* Light palette — mirrors AppColors.light */
+            --app-bg-base: #FAF9F5;
+            --app-bg-container: #F4F3EE;
+            --app-bg-elevated: #ECEAE1;
+            --app-border: #E3E1D9;
+            --app-text: #1F1E1C;
+            --app-text-secondary: #6B6862;
+            --app-text-tertiary: #B1ADA1;
+            --app-primary: #C15F3C;
+            --app-success: #4A7862;
+            --app-warning: #B08838;
+            --app-error: #B3492F;
+            --app-scrollbar: rgba(107, 104, 98, 0.28);
+            --app-scrollbar-hover: rgba(107, 104, 98, 0.48);
+            color-scheme: light;
+        }
+
+        /* Dark palette — mirrors AppColors.dark; the class is set by ThemeProvider */
+        html.dark {
+            --app-bg-base: #1A1917;
+            --app-bg-container: #26241F;
+            --app-bg-elevated: #322F29;
+            --app-border: #3D3A33;
+            --app-text: #F4F3EE;
+            --app-text-secondary: #B1ADA1;
+            --app-text-tertiary: #7A766D;
+            --app-primary: #D97B57;
+            --app-success: #6FA085;
+            --app-warning: #D0A85C;
+            --app-error: #D9705A;
+            --app-scrollbar: rgba(177, 173, 161, 0.28);
+            --app-scrollbar-hover: rgba(177, 173, 161, 0.48);
+            color-scheme: dark;
         }
 
         * {
@@ -44,6 +78,11 @@
             overflow: hidden;
         }
 
+        body {
+            background: var(--app-bg-base);
+            color: var(--app-text);
+        }
+
         /* Subtle scrollbars */
         ::-webkit-scrollbar {
             width: 6px;
@@ -53,24 +92,24 @@
             background: transparent;
         }
         ::-webkit-scrollbar-thumb {
-            background: rgba(140, 140, 140, 0.25);
+            background: var(--app-scrollbar);
             border-radius: 4px;
         }
         ::-webkit-scrollbar-thumb:hover {
-            background: rgba(140, 140, 140, 0.45);
+            background: var(--app-scrollbar-hover);
         }
 
         /* Live status dot pulsing */
         @keyframes pulse-dot {
-            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
-            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
-            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74, 120, 98, 0.55); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(74, 120, 98, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74, 120, 98, 0); }
         }
         .status-dot-active {
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background-color: #22c55e;
+            background-color: var(--app-success);
             animation: pulse-dot 2s infinite;
             display: inline-block;
         }
@@ -78,14 +117,14 @@
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background-color: #f59e0b;
+            background-color: var(--app-warning);
             display: inline-block;
         }
         .status-dot-disconnected {
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background-color: #ef4444;
+            background-color: var(--app-error);
             display: inline-block;
         }
 
@@ -109,14 +148,14 @@
 </head>
 <body>
     <div id="root">
-        <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0b0f19; color: #f8fafc; font-family: sans-serif;">
+        <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--app-bg-base); color: var(--app-text); font-family: var(--font-family);">
             <div style="font-size: 20px; font-weight: bold; margin-bottom: 8px;">vConsole Remote Dashboard</div>
-            <p style="color: #94a3b8; font-size: 13px;">Loading React & Ant Design interface...</p>
+            <p style="color: var(--app-text-tertiary); font-size: 13px;">Loading React & Ant Design interface...</p>
         </div>
     </div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
+        const { useState, useEffect, useRef, useMemo, useContext } = React;
         const {
             ConfigProvider,
             App: AntApp,
@@ -141,7 +180,8 @@
             Spin,
             Segmented,
             Alert,
-            Divider
+            Divider,
+            Grid
         } = antd;
 
         const { Header, Content } = Layout;
@@ -170,210 +210,242 @@
         const PlayCircleOutlined = Icons.PlayCircleOutlined || (() => <span>▶️</span>);
 
         /**
-         * Design Tokens & Color Palette
-         * Strict 1:1 Implementation of User's Flutter Theme Specification:
-         * - Fonts: 'Inter', 'KantumruyPro'
-         * - Shapes: 16px borderRadius for Cards (with outline border, elevation 0)
-         * - Shapes: 12px borderRadius for Buttons & Inputs (height: 48px, elevation 0)
-         * - Colors: Light (primary, surface, border) & Dark (accentDark, darkSurface, darkBorder)
+         * Design tokens.
+         * - Fonts: 'Inter', 'Kantumruy Pro'
+         * - Shapes: 12px radius for cards, 8px for buttons and inputs, 10px base
+         * - Controls: 42px high, flat (no elevation), 1px outline borders
+         * - Colours: warm paper / charcoal surfaces with a terracotta accent
          */
         const AppColors = {
-            // Light Theme Colors
-            primary: '#2563eb',
-            primaryContainer: '#dbeafe',
-            primaryDark: '#1d4ed8',
-            accentGold: '#faad14',
-            accentGoldContainer: '#fffbe6',
-            lightSurface: '#ffffff',
-            lightBackground: '#f8fafc',
-            lightTextPrimary: '#0f172a',
-            lightTextSecondary: '#475569',
-            lightTextMuted: '#94a3b8',
-            lightBorder: '#e2e8f0',
-            danger: '#ef4444',
-            dangerContainer: '#fee2e2',
-
-            // Dark Theme Colors
-            accentDark: '#38bdf8',
-            darkBackground: '#0b0f19',
-            primaryContainerDark: '#1e293b',
-            darkSurface: '#151e2e',
-            darkTextPrimary: '#f8fafc',
-            darkTextSecondary: '#94a3b8',
-            darkTextMuted: '#64748b',
-            darkBorder: '#334155',
-            warningDark: '#fbbf24',
-            warningContainerDark: '#451a03',
-            dangerDark: '#f87171',
-            dangerContainerDark: '#450a0a',
+            // Light — warm paper surfaces with a terracotta accent
+            light: {
+                bgBase: '#FAF9F5',
+                bgContainer: '#F4F3EE',
+                bgElevated: '#ECEAE1',
+                border: '#E3E1D9',
+                text: '#1F1E1C',
+                textSecondary: '#6B6862',
+                textTertiary: '#B1ADA1',
+                primary: '#C15F3C',
+                primaryHover: '#A94F30',
+                primaryActive: '#8E3F24',
+                success: '#4A7862',
+                warning: '#B08838',
+                error: '#B3492F',
+                onPrimary: '#FFFFFF',
+            },
+            // Dark — warm charcoal surfaces with a lifted terracotta accent
+            dark: {
+                bgBase: '#1A1917',
+                bgContainer: '#26241F',
+                bgElevated: '#322F29',
+                border: '#3D3A33',
+                text: '#F4F3EE',
+                textSecondary: '#B1ADA1',
+                textTertiary: '#7A766D',
+                primary: '#D97B57',
+                primaryHover: '#E68F6D',
+                primaryActive: '#C15F3C',
+                success: '#6FA085',
+                warning: '#D0A85C',
+                error: '#D9705A',
+                onPrimary: '#1A1917',
+            }
         };
 
         const fontFamilyStack = "'Inter', 'Kantumruy Pro', 'KantumruyPro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
-        const lightThemeConfig = {
-            algorithm: antTheme.defaultAlgorithm,
+        /**
+         * Build an Ant Design ThemeConfig from one of the palettes above.
+         * Both modes share the same shape scale, so only colour changes between them.
+         */
+        const buildThemeConfig = (palette, algorithm) => ({
+            ...(algorithm ? { algorithm } : {}),
             token: {
                 fontFamily: fontFamilyStack,
-                colorPrimary: AppColors.primary,
-                colorPrimaryBg: AppColors.primaryContainer,
-                colorPrimaryHover: AppColors.primaryDark,
-                colorWarning: AppColors.accentGold,
-                colorError: AppColors.danger,
-                colorBgBase: AppColors.lightBackground,
-                colorBgLayout: AppColors.lightBackground,
-                colorBgContainer: AppColors.lightSurface,
-                colorBgElevated: AppColors.lightSurface,
-                colorBorder: AppColors.lightBorder,
-                colorBorderSecondary: AppColors.lightBorder,
-                colorText: AppColors.lightTextPrimary,
-                colorTextSecondary: AppColors.lightTextSecondary,
-                colorTextTertiary: AppColors.lightTextMuted,
-                colorTextDescription: AppColors.lightTextMuted,
-                borderRadius: 12,
-                borderRadiusLG: 16,
-                controlHeight: 48,
+                colorBgBase: palette.bgBase,
+                colorBgLayout: palette.bgBase,
+                colorBgContainer: palette.bgContainer,
+                colorBgElevated: palette.bgElevated,
+                colorBorder: palette.border,
+                colorBorderSecondary: palette.border,
+                colorText: palette.text,
+                colorTextSecondary: palette.textSecondary,
+                colorTextTertiary: palette.textTertiary,
+                colorTextDescription: palette.textTertiary,
+                colorPrimary: palette.primary,
+                colorPrimaryHover: palette.primaryHover,
+                colorInfo: palette.primary,
+                colorLink: palette.primary,
+                colorLinkHover: palette.primaryHover,
+                colorSuccess: palette.success,
+                colorWarning: palette.warning,
+                colorError: palette.error,
+                borderRadius: 10,
+                borderRadiusLG: 12,
+                borderRadiusSM: 6,
+                controlHeight: 42,
             },
             components: {
+                Layout: {
+                    bodyBg: palette.bgBase,
+                    headerBg: palette.bgBase,
+                    footerBg: palette.bgBase,
+                    headerHeight: 72,
+                    headerPadding: '0 16px',
+                    headerColor: palette.text,
+                },
+                Button: {
+                    controlHeight: 42,
+                    fontWeight: 600,
+                    primaryColor: palette.onPrimary,
+                    colorPrimary: palette.primary,
+                    colorPrimaryHover: palette.primaryHover,
+                    colorPrimaryActive: palette.primaryActive,
+                    borderRadius: 8,
+                    primaryShadow: 'none',
+                },
                 Card: {
-                    colorBgContainer: AppColors.lightSurface,
-                    colorBorderSecondary: AppColors.lightBorder,
-                    borderRadiusLG: 16,
+                    colorBgContainer: palette.bgContainer,
+                    colorBorderSecondary: palette.border,
+                    borderRadiusLG: 12,
+                    paddingLG: 16,
                     boxShadow: 'none',
                     boxShadowTertiary: 'none',
                 },
-                Button: {
-                    borderRadius: 12,
-                    controlHeight: 48,
-                    fontWeight: 600,
-                    primaryShadow: 'none',
-                },
-                Input: {
-                    borderRadius: 12,
-                    controlHeight: 48,
-                    colorBgContainer: AppColors.lightSurface,
-                    colorBorder: AppColors.lightBorder,
-                    activeBorderColor: AppColors.primary,
-                },
-                Layout: {
-                    headerBg: AppColors.lightSurface,
-                    headerColor: AppColors.lightTextPrimary,
-                    headerHeight: 64,
-                    headerPadding: '0 20px',
-                    bodyBg: AppColors.lightBackground,
-                },
                 Table: {
-                    borderRadius: 12,
-                    colorBgContainer: AppColors.lightSurface,
-                    colorBorderSecondary: AppColors.lightBorder,
+                    colorBgContainer: palette.bgContainer,
+                    headerBg: palette.bgElevated,
+                    borderColor: palette.border,
+                    headerColor: palette.text,
+                    rowHoverBg: palette.bgElevated,
                 },
                 Tabs: {
-                    itemColor: AppColors.lightTextSecondary,
-                    itemSelectedColor: AppColors.primary,
-                    itemHoverColor: AppColors.primaryDark,
+                    itemColor: palette.textSecondary,
+                    itemHoverColor: palette.primary,
+                    itemSelectedColor: palette.primary,
+                    inkBarColor: palette.primary,
                     titleFontSize: 14,
                 },
+                Input: {
+                    colorBgContainer: palette.bgBase,
+                    colorBorder: palette.border,
+                    colorText: palette.text,
+                    hoverBorderColor: palette.primary,
+                    activeBorderColor: palette.primary,
+                    borderRadius: 8,
+                },
+                Tag: {
+                    borderRadiusSM: 6,
+                },
+                Modal: {
+                    contentBg: palette.bgContainer,
+                    headerBg: palette.bgContainer,
+                },
                 Drawer: {
-                    colorBgElevated: AppColors.lightSurface,
-                    borderRadiusLG: 16,
-                }
+                    colorBgElevated: palette.bgContainer,
+                    borderRadiusLG: 12,
+                },
+                Segmented: {
+                    itemSelectedBg: palette.bgElevated,
+                    itemSelectedColor: palette.primary,
+                },
+                Alert: {
+                    borderRadiusLG: 12,
+                },
             }
-        };
+        });
 
-        const darkThemeConfig = {
-            algorithm: antTheme.darkAlgorithm,
-            token: {
-                fontFamily: fontFamilyStack,
-                colorPrimary: AppColors.accentDark,
-                colorPrimaryBg: AppColors.primaryContainerDark,
-                colorWarning: AppColors.warningDark,
-                colorError: AppColors.dangerDark,
-                colorBgBase: AppColors.darkBackground,
-                colorBgLayout: AppColors.darkBackground,
-                colorBgContainer: AppColors.darkSurface,
-                colorBgElevated: AppColors.darkSurface,
-                colorBorder: AppColors.darkBorder,
-                colorBorderSecondary: AppColors.darkBorder,
-                colorText: AppColors.darkTextPrimary,
-                colorTextSecondary: AppColors.darkTextSecondary,
-                colorTextTertiary: AppColors.darkTextMuted,
-                colorTextDescription: AppColors.darkTextMuted,
-                borderRadius: 12,
-                borderRadiusLG: 16,
-                controlHeight: 48,
-            },
-            components: {
-                Card: {
-                    colorBgContainer: AppColors.darkSurface,
-                    colorBorderSecondary: AppColors.darkBorder,
-                    borderRadiusLG: 16,
-                    boxShadow: 'none',
-                    boxShadowTertiary: 'none',
-                },
-                Button: {
-                    borderRadius: 12,
-                    controlHeight: 48,
-                    fontWeight: 600,
-                    primaryShadow: 'none',
-                    primaryColor: AppColors.darkBackground,
-                },
-                Input: {
-                    borderRadius: 12,
-                    controlHeight: 48,
-                    colorBgContainer: AppColors.darkSurface,
-                    colorBorder: AppColors.darkBorder,
-                    activeBorderColor: AppColors.accentDark,
-                },
-                Layout: {
-                    headerBg: AppColors.darkSurface,
-                    headerColor: AppColors.darkTextPrimary,
-                    headerHeight: 64,
-                    headerPadding: '0 20px',
-                    bodyBg: AppColors.darkBackground,
-                },
-                Table: {
-                    borderRadius: 12,
-                    colorBgContainer: AppColors.darkSurface,
-                    colorBorderSecondary: AppColors.darkBorder,
-                },
-                Tabs: {
-                    itemColor: AppColors.darkTextSecondary,
-                    itemSelectedColor: AppColors.accentDark,
-                    itemHoverColor: AppColors.accentDark,
-                    titleFontSize: 14,
-                },
-                Drawer: {
-                    colorBgElevated: AppColors.darkSurface,
-                    borderRadiusLG: 16,
+        const lightThemeConfig = buildThemeConfig(AppColors.light, null);
+        const darkThemeConfig = buildThemeConfig(AppColors.dark, antTheme.darkAlgorithm);
+
+        /**
+         * Theme mode context. A single source of truth shared by the provider that
+         * feeds ConfigProvider and the toggle inside the dashboard — two separate
+         * useState hooks would leave ConfigProvider on a stale mode.
+         */
+        const THEME_STORAGE_KEY = 'dg_mini_theme_mode';
+
+        const ThemeContext = React.createContext({
+            mode: 'light',
+            toggleTheme: () => {},
+            setMode: () => {},
+        });
+
+        const useThemeMode = () => useContext(ThemeContext);
+
+        function ThemeProvider({ children }) {
+            const [mode, setMode] = useState(() => {
+                try {
+                    return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+                } catch (_) {
+                    return 'light';
                 }
-            }
-        };
+            });
+
+            useEffect(() => {
+                try {
+                    localStorage.setItem(THEME_STORAGE_KEY, mode);
+                } catch (_) {}
+                document.documentElement.classList.toggle('dark', mode === 'dark');
+                document.documentElement.style.colorScheme = mode;
+            }, [mode]);
+
+            // Keep other tabs of the dashboard in sync
+            useEffect(() => {
+                const listener = (event) => {
+                    if (event.key === THEME_STORAGE_KEY && event.newValue) {
+                        setMode(event.newValue === 'dark' ? 'dark' : 'light');
+                    }
+                };
+                window.addEventListener('storage', listener);
+                return () => window.removeEventListener('storage', listener);
+            }, []);
+
+            const value = useMemo(() => ({
+                mode,
+                setMode,
+                toggleTheme: () => setMode(prev => (prev === 'light' ? 'dark' : 'light')),
+            }), [mode]);
+
+            return (
+                <ThemeContext.Provider value={value}>
+                    <ConfigProvider theme={mode === 'dark' ? darkThemeConfig : lightThemeConfig}>
+                        {children}
+                    </ConfigProvider>
+                </ThemeContext.Provider>
+            );
+        }
 
         // Inner Dashboard Component (Consumes Ant Design Theme Tokens & App Hooks)
         function Dashboard() {
             const { message: antMessage } = AntApp.useApp();
             const { token } = antTheme.useToken();
 
-            // Theme toggle state
-            const [isDarkMode, setIsDarkMode] = useState(() => {
-                const saved = localStorage.getItem('vconsole_theme');
-                return saved ? saved === 'dark' : true;
-            });
+            // Theme mode from the shared provider that also drives ConfigProvider
+            const { mode, toggleTheme } = useThemeMode();
+            const isDarkMode = mode === 'dark';
+            const palette = isDarkMode ? AppColors.dark : AppColors.light;
 
-            const toggleTheme = () => {
-                setIsDarkMode(prev => {
-                    const next = !prev;
-                    localStorage.setItem('vconsole_theme', next ? 'dark' : 'light');
-                    return next;
-                });
-            };
+            // Responsive breakpoints drive layout density across the dashboard
+            const screens = Grid.useBreakpoint();
+            const isMobile = !screens.md;
+            const isCompact = !screens.lg;
 
             // WebSocket & Room States
             const [roomPin, setRoomPin] = useState('');
+            const [roomKey, setRoomKey] = useState('');
             const [pinInputValue, setPinInputValue] = useState('');
-            const [connectionStatus, setConnectionStatus] = useState('disconnected'); // 'disconnected' | 'connecting' | 'connected'
+            const [connectionStatus, setConnectionStatus] = useState('disconnected'); // 'disconnected' | 'connecting' | 'awaiting_approval' | 'connected'
+            const [authNotice, setAuthNotice] = useState(null);
             const [deviceConnected, setDeviceConnected] = useState(false);
             const [activeTab, setActiveTab] = useState('console');
             const wsRef = useRef(null);
+            // Tracks the room this tab is currently attached to. connectToRoom
+            // rewrites the hash, which fires hashchange and would otherwise
+            // start a second connection that races the first for the room's
+            // single developer slot.
+            const activePinRef = useRef('');
 
             // Tab Data States
             const [logs, setLogs] = useState([]);
@@ -434,11 +506,16 @@
                     if (match) {
                         const pin = match[1];
                         const tab = match[2];
+                        // The QR code appends the room secret as ?key=<hex>
+                        const keyMatch = hash.match(/[?&]key=([A-Za-z0-9_-]+)/);
+                        const key = keyMatch ? keyMatch[1] : '';
                         setPinInputValue(`${pin.slice(0, 3)}-${pin.slice(3)}`);
                         if (tab && ['console', 'network', 'storage', 'dom', 'screenshot', 'repl'].includes(tab)) {
                             setActiveTab(tab);
                         }
-                        connectToRoom(pin);
+                        if (activePinRef.current !== pin) {
+                            connectToRoom(pin, key, tab);
+                        }
                     }
                 };
                 parseHash();
@@ -447,7 +524,7 @@
             }, []);
 
             // Connect to Room
-            const connectToRoom = (pinToConnect) => {
+            const connectToRoom = (pinToConnect, keyToUse, tabToOpen) => {
                 const rawPin = (pinToConnect || pinInputValue).replace(/\D/g, '');
                 if (rawPin.length !== 6) {
                     antMessage.error('Please enter a valid 6-digit room PIN.');
@@ -458,20 +535,29 @@
                     wsRef.current.close();
                 }
 
+                const key = keyToUse !== undefined ? keyToUse : roomKey;
+
+                activePinRef.current = rawPin;
                 setConnectionStatus('connecting');
+                setAuthNotice(null);
                 setRoomPin(rawPin);
-                window.location.hash = `#/room/${rawPin}/${activeTab}`;
+                setRoomKey(key || '');
+                const targetTab = tabToOpen || activeTab;
+                window.location.hash = key
+                    ? `#/room/${rawPin}/${targetTab}?key=${encodeURIComponent(key)}`
+                    : `#/room/${rawPin}/${targetTab}`;
 
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/ws?type=developer&pin=${rawPin}`;
+                // The PIN is sent in-band rather than as a query parameter so the
+                // server can answer a refusal with a reason the UI can explain.
+                const wsUrl = `${protocol}//${window.location.host}/ws?type=developer`;
 
                 try {
                     const ws = new WebSocket(wsUrl);
                     wsRef.current = ws;
 
                     ws.onopen = () => {
-                        setConnectionStatus('connected');
-                        antMessage.success(`Connected to Room ${rawPin.slice(0, 3)}-${rawPin.slice(3)}`);
+                        ws.send(JSON.stringify({ type: 'connect_room', pin: rawPin, key: key || undefined }));
                     };
 
                     ws.onmessage = (event) => {
@@ -488,11 +574,25 @@
                         setConnectionStatus('disconnected');
                     };
 
-                    ws.onclose = () => {
-                        setConnectionStatus('disconnected');
+                    ws.onclose = (event) => {
+                        activePinRef.current = '';
+                        setConnectionStatus(prev => {
+                            // Closing before pairing completed means the server refused
+                            // the socket outright (unknown room, room busy, or a
+                            // temporary block after repeated failed attempts).
+                            if (prev === 'connecting') {
+                                setAuthNotice(current => current || {
+                                    type: 'error',
+                                    title: 'Connection refused',
+                                    detail: 'The room may not exist, may already be in use by another developer, or this network is temporarily blocked after too many failed attempts.'
+                                });
+                            }
+                            return 'disconnected';
+                        });
                         setDeviceConnected(false);
                     };
                 } catch (e) {
+                    activePinRef.current = '';
                     setConnectionStatus('disconnected');
                     antMessage.error('Failed to initialize WebSocket connection.');
                 }
@@ -503,9 +603,12 @@
                     wsRef.current.close();
                     wsRef.current = null;
                 }
+                activePinRef.current = '';
                 setConnectionStatus('disconnected');
                 setDeviceConnected(false);
                 setRoomPin('');
+                setRoomKey('');
+                setAuthNotice(null);
                 window.location.hash = '';
                 antMessage.info('Disconnected from debug session.');
             };
@@ -523,8 +626,56 @@
                 if (!msg || !msg.type) return;
 
                 switch (msg.type) {
+                    case 'auth_pending':
+                        setConnectionStatus('awaiting_approval');
+                        setAuthNotice({
+                            type: 'pending',
+                            title: 'Waiting for device approval',
+                            detail: `Approve this connection on the mobile device. The request expires in ${msg.expiresIn || 60} seconds.`
+                        });
+                        break;
+                    case 'auth_rejected':
+                        setAuthNotice({
+                            type: 'error',
+                            title: 'Connection rejected',
+                            detail: 'The device owner rejected this debug session.'
+                        });
+                        setConnectionStatus('disconnected');
+                        antMessage.error('The device owner rejected this connection.');
+                        break;
+                    case 'auth_timeout':
+                        setAuthNotice({
+                            type: 'error',
+                            title: 'Approval timed out',
+                            detail: 'The device did not answer the authorization request. Try again when the device is unlocked.'
+                        });
+                        setConnectionStatus('disconnected');
+                        antMessage.warning('Authorization request timed out.');
+                        break;
+                    case 'rate_limited':
+                        setAuthNotice({
+                            type: 'error',
+                            title: 'Too many failed attempts',
+                            detail: msg.message || 'This network is temporarily blocked. Wait for the cooldown to end and try again.'
+                        });
+                        setConnectionStatus('disconnected');
+                        antMessage.error(msg.message || 'Too many failed attempts.');
+                        break;
+                    case 'session_expired':
+                        setAuthNotice({
+                            type: 'error',
+                            title: msg.reason === 'max_duration' ? 'Session reached its time limit' : 'Session closed after inactivity',
+                            detail: msg.message || 'The debug session was closed by the server.'
+                        });
+                        setConnectionStatus('disconnected');
+                        setDeviceConnected(false);
+                        antMessage.warning(msg.message || 'Debug session expired.');
+                        break;
                     case 'room_connected':
+                        setConnectionStatus('connected');
+                        setAuthNotice(null);
                         setDeviceConnected(true);
+                        antMessage.success(`Connected to Room ${(msg.pin || '').slice(0, 3)}-${(msg.pin || '').slice(3)}`);
                         break;
                     case 'device_connected':
                         setDeviceConnected(true);
@@ -607,9 +758,25 @@
                             isError: !!msg.isError
                         }]);
                         break;
-                    case 'error':
+                    case 'error': {
+                        const titles = {
+                            room_not_found: 'Room not found',
+                            room_busy: 'Room already in use',
+                            invalid_key: 'Invalid room key',
+                            invalid_pin: 'Invalid PIN',
+                            not_paired: 'Not authorized for this room'
+                        };
+                        if (msg.reason && titles[msg.reason]) {
+                            setAuthNotice({
+                                type: 'error',
+                                title: titles[msg.reason],
+                                detail: msg.message || 'The server refused this debug session.'
+                            });
+                            setConnectionStatus('disconnected');
+                        }
                         antMessage.error(msg.message || 'Server error received.');
                         break;
+                    }
                     default:
                         break;
                 }
@@ -712,7 +879,9 @@
             };
 
             const copyRoomLink = () => {
-                const url = `${window.location.origin}/#/room/${roomPin}`;
+                const url = roomKey
+                    ? `${window.location.origin}/#/room/${roomPin}?key=${encodeURIComponent(roomKey)}`
+                    : `${window.location.origin}/#/room/${roomPin}`;
                 navigator.clipboard.writeText(url);
                 antMessage.success('Room link copied to clipboard!');
             };
@@ -750,7 +919,7 @@
                             {hasChildren && <span style={{ fontSize: 10 }}>{expanded ? '▼' : '▶'}</span>}
                             <span style={{ color: token.colorPrimary, fontWeight: 600 }}>&lt;{node.tag || 'node'}</span>
                             {node.id && <span style={{ color: token.colorWarning }}>id="{node.id}"</span>}
-                            {node.className && <span style={{ color: token.colorSuccess || '#10b981' }}>class="{node.className}"</span>}
+                            {node.className && <span style={{ color: token.colorSuccess }}>class="{node.className}"</span>}
                             <span style={{ color: token.colorPrimary, fontWeight: 600 }}>&gt;</span>
                             {node.text && <span style={{ color: token.colorTextSecondary }}>"{node.text.slice(0, 40)}{node.text.length > 40 ? '...' : ''}"</span>}
                         </div>
@@ -775,55 +944,61 @@
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        height: 64,
-                        padding: '0 20px',
+                        gap: 8,
+                        height: 72,
+                        lineHeight: 'normal',
+                        padding: isMobile ? '0 12px' : '0 20px',
                         borderBottom: `1px solid ${token.colorBorder}`,
                         zIndex: 100,
                         backgroundColor: token.colorBgContainer
                     }}>
                         {/* Brand Logo & Title */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
                             <div style={{
                                 width: 38,
                                 height: 38,
-                                borderRadius: 12,
+                                borderRadius: 10,
                                 background: token.colorPrimary,
-                                color: isDarkMode ? AppColors.darkBackground : '#ffffff',
+                                color: palette.onPrimary,
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 fontWeight: 700,
-                                fontSize: 16
+                                fontSize: 16,
+                                flexShrink: 0
                             }}>
                                 vC
                             </div>
-                            <div>
-                                <Text strong style={{
-                                    fontSize: 16,
-                                    fontWeight: 700,
-                                    color: token.colorText,
-                                    letterSpacing: '-0.01em'
-                                }} className="header-title-text">
-                                    vConsole Remote
-                                </Text>
-                            </div>
+                            {!isCompact && (
+                                <div>
+                                    <Text strong style={{
+                                        fontSize: 16,
+                                        fontWeight: 700,
+                                        color: token.colorText,
+                                        letterSpacing: '-0.01em'
+                                    }} className="header-title-text">
+                                        vConsole Remote
+                                    </Text>
+                                </div>
+                            )}
                         </div>
 
                         {/* Centered Title / Room Status (Flutter: centerTitle: true) */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flexShrink: 1 }}>
                             {connectionStatus === 'connected' ? (
                                 <div style={{
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: 10,
-                                    padding: '6px 16px',
+                                    gap: isMobile ? 6 : 10,
+                                    padding: isMobile ? '6px 10px' : '6px 16px',
                                     borderRadius: 20,
                                     background: token.colorBgLayout,
-                                    border: `1px solid ${token.colorBorder}`
+                                    border: `1px solid ${token.colorBorder}`,
+                                    minWidth: 0
                                 }}>
                                     <span className={deviceConnected ? "status-dot-active" : "status-dot-waiting"}></span>
-                                    <Text strong style={{ fontFamily: 'var(--font-family-mono)', fontSize: 13, color: token.colorText }}>
-                                        ROOM: {roomPin ? `${roomPin.slice(0, 3)}-${roomPin.slice(3)}` : '------'}
+                                    <Text strong style={{ fontFamily: 'var(--font-family-mono)', fontSize: 13, color: token.colorText, whiteSpace: 'nowrap' }}>
+                                        {isMobile ? '' : 'ROOM: '}{roomPin ? `${roomPin.slice(0, 3)}-${roomPin.slice(3)}` : '------'}
                                     </Text>
                                     <Tooltip title="Copy Room Link">
                                         <Button
@@ -833,37 +1008,57 @@
                                             onClick={copyRoomLink}
                                         />
                                     </Tooltip>
-                                    <Tag color={deviceConnected ? "success" : "warning"} style={{ borderRadius: 6, margin: 0, fontWeight: 600 }}>
-                                        {deviceConnected ? "DEVICE CONNECTED" : "WAITING FOR DEVICE"}
-                                    </Tag>
+                                    {!isCompact && (
+                                        <Tag color={deviceConnected ? "success" : "warning"} style={{ borderRadius: 6, margin: 0, fontWeight: 600 }}>
+                                            {deviceConnected ? "DEVICE CONNECTED" : "WAITING FOR DEVICE"}
+                                        </Tag>
+                                    )}
                                 </div>
                             ) : (
-                                <Tag color="default" style={{ borderRadius: 20, padding: '4px 14px', fontSize: 12, border: `1px solid ${token.colorBorder}` }}>
+                                <Tag color="default" style={{ borderRadius: 20, padding: '4px 14px', fontSize: 12, border: `1px solid ${token.colorBorder}`, margin: 0, whiteSpace: 'nowrap' }}>
                                     <span className="status-dot-disconnected" style={{ marginRight: 8 }}></span>
-                                    DISCONNECTED
+                                    {isMobile ? 'OFFLINE' : 'DISCONNECTED'}
                                 </Tag>
                             )}
                         </div>
 
                         {/* Right Action: Theme Switch & Session Disconnect */}
-                        <Space size={12}>
+                        <Space size={isMobile ? 8 : 12} style={{ flexShrink: 0 }}>
                             <Tooltip title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}>
                                 <Button
                                     type="default"
                                     shape="circle"
-                                    icon={isDarkMode ? <SunOutlined style={{ color: AppColors.warningDark }} /> : <MoonOutlined style={{ color: AppColors.primary }} />}
+                                    aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                                    icon={isDarkMode ? <SunOutlined style={{ color: token.colorWarning }} /> : <MoonOutlined style={{ color: token.colorPrimary }} />}
                                     onClick={toggleTheme}
                                 />
                             </Tooltip>
 
                             {connectionStatus === 'connected' ? (
-                                <Button danger type="primary" onClick={disconnectRoom} style={{ height: 40 }}>
-                                    Disconnect
-                                </Button>
+                                <Tooltip title={isMobile ? 'Disconnect' : ''}>
+                                    <Button
+                                        danger
+                                        type="primary"
+                                        shape={isMobile ? 'circle' : 'default'}
+                                        aria-label="Disconnect"
+                                        icon={isMobile ? <CloseCircleOutlined /> : null}
+                                        onClick={disconnectRoom}
+                                    >
+                                        {isMobile ? null : 'Disconnect'}
+                                    </Button>
+                                </Tooltip>
                             ) : (
-                                <Button type="primary" onClick={() => connectToRoom()} style={{ height: 40 }}>
-                                    Connect
-                                </Button>
+                                <Tooltip title={isMobile ? 'Connect' : ''}>
+                                    <Button
+                                        type="primary"
+                                        shape={isMobile ? 'circle' : 'default'}
+                                        aria-label="Connect"
+                                        icon={isMobile ? <ThunderboltOutlined /> : null}
+                                        onClick={() => connectToRoom()}
+                                    >
+                                        {isMobile ? null : 'Connect'}
+                                    </Button>
+                                </Tooltip>
                             )}
                         </Space>
                     </Header>
@@ -874,7 +1069,7 @@
                         overflow: 'hidden',
                         display: 'flex',
                         flexDirection: 'column',
-                        padding: '16px 20px',
+                        padding: isMobile ? '12px' : '16px 20px',
                         backgroundColor: token.colorBgLayout
                     }}>
                         {connectionStatus !== 'connected' ? (
@@ -882,12 +1077,11 @@
                             <div style={{
                                 flex: 1,
                                 overflowY: 'auto',
-                                padding: '20px 0',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
+                                overflowX: 'hidden',
+                                padding: isMobile ? '12px 0' : '20px 0',
+                                display: 'flex'
                             }}>
-                                <div style={{ maxWidth: 1040, width: '100%', margin: '0 auto' }}>
+                                <div style={{ maxWidth: 1040, width: '100%', margin: 'auto' }}>
                                     <Row gutter={[24, 24]} align="stretch">
                                         {/* Left Column: Device Pairing Hub */}
                                         <Col xs={24} lg={11}>
@@ -899,12 +1093,12 @@
                                                     justifyContent: 'space-between',
                                                     backgroundColor: token.colorBgContainer,
                                                     border: `1px solid ${token.colorBorder}`,
-                                                    borderRadius: 16
+                                                    borderRadius: 12
                                                 }}
                                             >
                                                 <div>
                                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                                                        <Tag color="processing" icon={<ApiOutlined />} style={{ borderRadius: 20, padding: '3px 12px', fontSize: 12, fontWeight: 600 }}>
+                                                        <Tag icon={<ApiOutlined />} style={{ borderRadius: 20, padding: '3px 12px', fontSize: 12, fontWeight: 600, color: token.colorPrimary, background: token.colorBgElevated, border: `1px solid ${token.colorBorder}` }}>
                                                             IN-MEMORY BROKER
                                                         </Tag>
                                                         <span style={{ fontSize: 12, color: token.colorTextTertiary }}>
@@ -919,6 +1113,35 @@
                                                     <Text style={{ fontSize: 13.5, lineHeight: 1.6, color: token.colorTextSecondary, display: 'block', marginBottom: 24 }}>
                                                         Enter the 6-digit PIN code displayed on your mobile device's vConsole <Tag style={{ borderRadius: 6, fontWeight: 600 }}>Remote</Tag> tab.
                                                     </Text>
+
+                                                    {authNotice && (
+                                                        <Alert
+                                                            type={authNotice.type === 'pending' ? 'warning' : 'error'}
+                                                            showIcon
+                                                            message={authNotice.title}
+                                                            description={authNotice.detail}
+                                                            style={{ borderRadius: 12, marginBottom: 20 }}
+                                                        />
+                                                    )}
+
+                                                    {connectionStatus === 'awaiting_approval' && (
+                                                        <div style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            gap: 10,
+                                                            padding: '14px',
+                                                            marginBottom: 20,
+                                                            borderRadius: 12,
+                                                            background: token.colorBgLayout,
+                                                            border: `1px solid ${token.colorBorder}`
+                                                        }}>
+                                                            <Spin size="small" />
+                                                            <Text style={{ fontSize: 13, color: token.colorTextSecondary }}>
+                                                                Tap <Text strong>Allow</Text> on the device to start streaming
+                                                            </Text>
+                                                        </div>
+                                                    )}
 
                                                     {/* PIN Entry Box */}
                                                     <div style={{
@@ -958,7 +1181,7 @@
                                                                     fontSize: 28,
                                                                     letterSpacing: 6,
                                                                     fontFamily: 'var(--font-family-mono)',
-                                                                    height: 48,
+                                                                    height: 42,
                                                                     fontWeight: 'bold',
                                                                     borderRadius: 12
                                                                 }}
@@ -975,11 +1198,11 @@
                                                         size="large"
                                                         block
                                                         icon={<ThunderboltOutlined />}
-                                                        loading={connectionStatus === 'connecting'}
+                                                        loading={connectionStatus === 'connecting' || connectionStatus === 'awaiting_approval'}
                                                         onClick={() => connectToRoom()}
-                                                        disabled={pinInputValue.replace(/\D/g, '').length !== 6}
+                                                        disabled={pinInputValue.replace(/\D/g, '').length !== 6 || connectionStatus === 'awaiting_approval'}
                                                         style={{
-                                                            height: 48,
+                                                            height: 42,
                                                             fontSize: 15,
                                                             borderRadius: 12,
                                                             fontWeight: 600,
@@ -991,8 +1214,8 @@
 
                                                 <div style={{ marginTop: 24, paddingTop: 16, borderTop: `1px solid ${token.colorBorder}` }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: token.colorTextTertiary }}>
-                                                        <span>Direct Hash URL: <code>/#/room/&lt;PIN&gt;</code></span>
-                                                        <span>RSS Memory: &lt;15MB</span>
+                                                        <span>Direct Hash URL: <code>/#/room/&lt;PIN&gt;?key=&lt;KEY&gt;</code></span>
+                                                        <span>Device approval required</span>
                                                     </div>
                                                 </div>
                                             </Card>
@@ -1005,7 +1228,7 @@
                                                     height: '100%',
                                                     backgroundColor: token.colorBgContainer,
                                                     border: `1px solid ${token.colorBorder}`,
-                                                    borderRadius: 16
+                                                    borderRadius: 12
                                                 }}
                                             >
                                                 <Title level={4} style={{ marginBottom: 4, fontWeight: 700, color: token.colorText }}>
@@ -1077,12 +1300,12 @@ const vConsole = new VConsoleRemote({
                                                                             overflowX: 'auto',
                                                                             lineHeight: 1.6
                                                                         }}>
-{`<script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"></script>
+{`<script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"><\/script>
 <script>
   new window.VConsoleRemote({
     server: '${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//' + window.location.host
   });
-</script>`}
+<\/script>`}
                                                                         </pre>
                                                                         <Tooltip title="Copy snippet">
                                                                             <Button
@@ -1090,7 +1313,7 @@ const vConsole = new VConsoleRemote({
                                                                                 type="text"
                                                                                 icon={<CopyOutlined />}
                                                                                 onClick={() => {
-                                                                                    navigator.clipboard.writeText(`<script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"></script>\n<script>\n  new window.VConsoleRemote({\n    server: '${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//' + window.location.host\n  });\n</script>`);
+                                                                                    navigator.clipboard.writeText(`<script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"><\/script>\n<script>\n  new window.VConsoleRemote({\n    server: '${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//' + window.location.host\n  });\n<\/script>`);
                                                                                     antMessage.success('CDN snippet copied to clipboard!');
                                                                                 }}
                                                                                 style={{ position: 'absolute', top: 8, right: 8 }}
@@ -1118,7 +1341,7 @@ const vConsole = new VConsoleRemote({
                                                             <div style={{
                                                                 width: 24, height: 24, borderRadius: 12,
                                                                 background: token.colorPrimary,
-                                                                color: isDarkMode ? AppColors.darkBackground : '#fff',
+                                                                color: palette.onPrimary,
                                                                 fontSize: 12, fontWeight: 'bold',
                                                                 display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                                                             }}>1</div>
@@ -1133,7 +1356,7 @@ const vConsole = new VConsoleRemote({
                                                             <div style={{
                                                                 width: 24, height: 24, borderRadius: 12,
                                                                 background: token.colorPrimary,
-                                                                color: isDarkMode ? AppColors.darkBackground : '#fff',
+                                                                color: palette.onPrimary,
                                                                 fontSize: 12, fontWeight: 'bold',
                                                                 display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                                                             }}>2</div>
@@ -1148,7 +1371,7 @@ const vConsole = new VConsoleRemote({
                                                             <div style={{
                                                                 width: 24, height: 24, borderRadius: 12,
                                                                 background: token.colorPrimary,
-                                                                color: isDarkMode ? AppColors.darkBackground : '#fff',
+                                                                color: palette.onPrimary,
                                                                 fontSize: 12, fontWeight: 'bold',
                                                                 display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                                                             }}>3</div>
@@ -1174,9 +1397,9 @@ const vConsole = new VConsoleRemote({
                                 flexDirection: 'column',
                                 overflow: 'hidden',
                                 background: token.colorBgContainer,
-                                borderRadius: 16,
+                                borderRadius: 12,
                                 border: `1px solid ${token.colorBorder}`,
-                                padding: '16px 20px'
+                                padding: isMobile ? '10px 12px' : '16px 20px'
                             }}>
                                 <Tabs
                                     activeKey={activeTab}
@@ -1184,6 +1407,9 @@ const vConsole = new VConsoleRemote({
                                         setActiveTab(key);
                                         window.location.hash = `#/room/${roomPin}/${key}`;
                                     }}
+                                    size={isMobile ? 'small' : 'middle'}
+                                    tabBarGutter={isMobile ? 12 : 24}
+                                    more={{ trigger: 'click' }}
                                     style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
                                     items={[
                                         {
@@ -1209,6 +1435,7 @@ const vConsole = new VConsoleRemote({
                                                     }}>
                                                         <Space wrap>
                                                             <Segmented
+                                                                size={isMobile ? 'small' : 'middle'}
                                                                 options={[
                                                                     { label: 'All', value: 'all' },
                                                                     { label: 'Log', value: 'log' },
@@ -1226,7 +1453,7 @@ const vConsole = new VConsoleRemote({
                                                                 allowClear
                                                                 value={logSearchQuery}
                                                                 onChange={(e) => setLogSearchQuery(e.target.value)}
-                                                                style={{ width: 220, height: 38 }}
+                                                                style={{ width: isMobile ? '100%' : 220, height: 38 }}
                                                             />
                                                         </Space>
 
@@ -1250,14 +1477,15 @@ const vConsole = new VConsoleRemote({
                                                                 let bg = 'transparent';
                                                                 if (log.level === 'warn') {
                                                                     tagColor = 'warning';
-                                                                    bg = isDarkMode ? 'rgba(251, 191, 36, 0.08)' : 'rgba(254, 243, 199, 0.6)';
+                                                                    bg = isDarkMode ? 'rgba(208, 168, 92, 0.10)' : 'rgba(176, 136, 56, 0.10)';
                                                                 } else if (log.level === 'error') {
                                                                     tagColor = 'error';
-                                                                    bg = isDarkMode ? 'rgba(248, 113, 113, 0.08)' : 'rgba(254, 226, 226, 0.6)';
+                                                                    bg = isDarkMode ? 'rgba(217, 112, 90, 0.12)' : 'rgba(179, 73, 47, 0.10)';
                                                                 } else if (log.level === 'info') {
-                                                                    tagColor = 'blue';
+                                                                    tagColor = 'processing';
                                                                 } else if (log.level === 'debug') {
-                                                                    tagColor = 'purple';
+                                                                    tagColor = 'default';
+                                                                    bg = 'transparent';
                                                                 }
 
                                                                 return (
@@ -1333,6 +1561,7 @@ const vConsole = new VConsoleRemote({
                                                             pagination={false}
                                                             dataSource={filteredRequests}
                                                             rowKey="id"
+                                                            scroll={{ x: 'max-content' }}
                                                             onRow={(record) => ({
                                                                 onClick: () => setSelectedRequest(record),
                                                                 style: { cursor: 'pointer' }
@@ -1344,7 +1573,7 @@ const vConsole = new VConsoleRemote({
                                                                     key: 'method',
                                                                     width: 90,
                                                                     render: (method) => (
-                                                                        <Tag color={method === 'POST' ? 'green' : method === 'GET' ? 'blue' : 'orange'} style={{ fontWeight: 600 }}>
+                                                                        <Tag color={method === 'POST' ? 'success' : method === 'GET' ? 'processing' : 'warning'} style={{ fontWeight: 600, margin: 0 }}>
                                                                             {method}
                                                                         </Tag>
                                                                     )
@@ -1364,6 +1593,7 @@ const vConsole = new VConsoleRemote({
                                                                     title: 'URL',
                                                                     dataIndex: 'url',
                                                                     key: 'url',
+                                                                    width: 260,
                                                                     ellipsis: true,
                                                                     render: (url) => <Text style={{ fontFamily: 'var(--font-family-mono)', fontSize: 12, color: token.colorText }}>{url}</Text>
                                                                 },
@@ -1388,8 +1618,9 @@ const vConsole = new VConsoleRemote({
                                                     {/* Request Details Drawer */}
                                                     <Drawer
                                                         title={selectedRequest ? `${selectedRequest.method} ${selectedRequest.url}` : 'Request Details'}
-                                                        placement="right"
-                                                        width={560}
+                                                        placement={isMobile ? 'bottom' : 'right'}
+                                                        width={isCompact ? '100%' : 560}
+                                                        height={isMobile ? '85%' : undefined}
                                                         onClose={() => setSelectedRequest(null)}
                                                         open={!!selectedRequest}
                                                     >
@@ -1479,9 +1710,10 @@ const vConsole = new VConsoleRemote({
                                                     }}>
                                                         <Space wrap>
                                                             <Segmented
+                                                                size={isMobile ? 'small' : 'middle'}
                                                                 options={[
-                                                                    { label: 'localStorage', value: 'localStorage' },
-                                                                    { label: 'sessionStorage', value: 'sessionStorage' },
+                                                                    { label: isMobile ? 'Local' : 'localStorage', value: 'localStorage' },
+                                                                    { label: isMobile ? 'Session' : 'sessionStorage', value: 'sessionStorage' },
                                                                     { label: 'Cookies', value: 'cookies' },
                                                                 ]}
                                                                 value={selectedStorageType}
@@ -1493,7 +1725,7 @@ const vConsole = new VConsoleRemote({
                                                                 value={storageSearchQuery}
                                                                 onChange={(e) => setStorageSearchQuery(e.target.value)}
                                                                 allowClear
-                                                                style={{ width: 220, height: 38 }}
+                                                                style={{ width: isMobile ? '100%' : 220, height: 38 }}
                                                             />
                                                         </Space>
 
@@ -1513,18 +1745,20 @@ const vConsole = new VConsoleRemote({
                                                             size="small"
                                                             pagination={false}
                                                             dataSource={storageItems}
+                                                            scroll={{ x: 'max-content' }}
                                                             columns={[
                                                                 {
                                                                     title: 'Key',
                                                                     dataIndex: 'key',
                                                                     key: 'key',
-                                                                    width: '35%',
+                                                                    width: isMobile ? 140 : '35%',
                                                                     render: (k) => <Text strong style={{ fontFamily: 'var(--font-family-mono)', color: token.colorText }}>{k}</Text>
                                                                 },
                                                                 {
                                                                     title: 'Value',
                                                                     dataIndex: 'value',
                                                                     key: 'value',
+                                                                    width: isMobile ? 220 : undefined,
                                                                     ellipsis: true,
                                                                     render: (v) => <Text style={{ fontFamily: 'var(--font-family-mono)', color: token.colorTextSecondary }}>{v}</Text>
                                                                 },
@@ -1662,7 +1896,7 @@ const vConsole = new VConsoleRemote({
                                                     }}>
                                                         {screenshotUrl ? (
                                                             <div style={{
-                                                                borderRadius: 16,
+                                                                borderRadius: 12,
                                                                 overflow: 'hidden',
                                                                 border: `2px solid ${token.colorBorder}`,
                                                                 boxShadow: '0 8px 24px rgba(0,0,0,0.15)'
@@ -1713,7 +1947,7 @@ const vConsole = new VConsoleRemote({
                                                                         </div>
                                                                     ) : (
                                                                         <div style={{
-                                                                            color: out.isError ? token.colorError : token.colorSuccess || '#10b981',
+                                                                            color: out.isError ? token.colorError : token.colorSuccess,
                                                                             paddingLeft: 12,
                                                                             whiteSpace: 'pre-wrap'
                                                                         }}>
@@ -1726,10 +1960,10 @@ const vConsole = new VConsoleRemote({
                                                         <div ref={replEndRef} />
                                                     </div>
 
-                                                    <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                                                    <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'nowrap' }}>
                                                         <Input
                                                             prefix={<span style={{ fontFamily: 'var(--font-family-mono)', color: token.colorPrimary }}>&gt;</span>}
-                                                            placeholder="e.g. document.title, window.location.href, 2 + 2"
+                                                            placeholder={isMobile ? 'e.g. document.title' : 'e.g. document.title, window.location.href, 2 + 2'}
                                                             value={replInput}
                                                             onChange={(e) => setReplInput(e.target.value)}
                                                             onKeyDown={(e) => {
@@ -1761,14 +1995,18 @@ const vConsole = new VConsoleRemote({
                                                             icon={<PlayCircleOutlined />}
                                                             loading={executingJS}
                                                             onClick={executeREPLExpression}
+                                                            aria-label="Execute"
+                                                            style={{ flexShrink: 0 }}
                                                         >
-                                                            Execute
+                                                            {isMobile ? null : 'Execute'}
                                                         </Button>
                                                         <Button
                                                             icon={<ClearOutlined />}
                                                             onClick={() => setReplOutputs([])}
+                                                            aria-label="Clear output"
+                                                            style={{ flexShrink: 0 }}
                                                         >
-                                                            Clear
+                                                            {isMobile ? null : 'Clear'}
                                                         </Button>
                                                     </div>
                                                 </div>
@@ -1783,28 +2021,14 @@ const vConsole = new VConsoleRemote({
             );
         }
 
-        // Root App with ConfigProvider & AntApp Provider
+        // Root App: ThemeProvider owns the mode and wraps ConfigProvider
         function App() {
-            const [isDarkMode, setIsDarkMode] = useState(() => {
-                const saved = localStorage.getItem('vconsole_theme');
-                return saved ? saved === 'dark' : true;
-            });
-
-            useEffect(() => {
-                const listener = () => {
-                    const saved = localStorage.getItem('vconsole_theme');
-                    if (saved) setIsDarkMode(saved === 'dark');
-                };
-                window.addEventListener('storage', listener);
-                return () => window.removeEventListener('storage', listener);
-            }, []);
-
             return (
-                <ConfigProvider theme={isDarkMode ? darkThemeConfig : lightThemeConfig}>
+                <ThemeProvider>
                     <AntApp>
                         <Dashboard />
                     </AntApp>
-                </ConfigProvider>
+                </ThemeProvider>
             );
         }
 
