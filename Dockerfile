@@ -4,7 +4,7 @@
 # SDK ships separately over npm, so the image needs nothing but the Go build.
 
 # Stage 1: Build the static Go binary with embedded assets
-FROM golang:1.22-alpine AS go-builder
+FROM golang:1.26-alpine AS go-builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ COPY server/assets/ ./assets/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o vconsole-remote .
 
 # Stage 2: Minimal runtime
-FROM alpine:3.20 AS runner
+FROM alpine:3.24 AS runner
 
 LABEL org.opencontainers.image.title="vConsole Remote" \
       org.opencontainers.image.description="Remote debugging broker for mobile web apps" \
@@ -36,7 +36,9 @@ USER vconsole
 
 EXPOSE 8080
 
+# GET, not --spider: --spider sends HEAD and /healthz is a GET-only Echo
+# route, which answers 405 — that would mark the container unhealthy forever.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --spider -q http://127.0.0.1:8080/healthz || exit 1
+    CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
 
 ENTRYPOINT ["/app/vconsole-remote"]

@@ -1,0 +1,33 @@
+name: Deploy to VPS
+
+# Fires on every push to main, which includes the merge commit GitHub creates
+# when a pull request is merged.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never let two deploys touch the box at once; queue them instead of
+# cancelling, so an in-flight deploy is always allowed to finish cleanly.
+concurrency:
+  group: vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & Release on VPS
+    runs-on: [self-hosted, vconsole]
+    timeout-minutes: 20
+
+    steps:
+      # Checkout so the job runs the deploy script from this commit. The script
+      # itself acts on the live checkout elsewhere on disk — running it from the
+      # workspace avoids bash re-reading the file while git rewrites it.
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Deploy
+        run: ./scripts/deploy.sh
