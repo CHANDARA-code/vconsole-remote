@@ -2,6 +2,60 @@ import VConsole from 'vconsole';
 import QRCode from 'qrcode';
 
 /**
+ * Brand palette, mirroring the dashboard's Ant Design theme so the on-device
+ * UI and the desktop dashboard read as one product.
+ */
+const BrandColors = {
+  bgBase: '#FAF9F5',
+  bgContainer: '#F4F3EE',
+  bgElevated: '#ECEAE1',
+  border: '#E3E1D9',
+  text: '#1F1E1C',
+  textSecondary: '#6B6862',
+  textTertiary: '#B1ADA1',
+  primary: '#C15F3C',
+  primaryHover: '#A94F30',
+  success: '#4A7862',
+  warning: '#B08838',
+  error: '#B3492F',
+  onPrimary: '#FFFFFF',
+  overlay: 'rgba(31, 30, 28, 0.72)',
+};
+
+const REDACTED_HEADER = '[REDACTED]';
+const REDACTED_VALUE = '********';
+
+const DEFAULT_SENSITIVE_HEADERS = [
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'x-api-key',
+  'token',
+  'x-auth-token'
+];
+
+const DEFAULT_SENSITIVE_BODY_KEYS = [
+  'password',
+  'passwd',
+  'secret',
+  'credit_card',
+  'card_number',
+  'cvv',
+  'ssn',
+  'pin',
+  'token',
+  'access_token',
+  'refresh_token',
+  'auth_token',
+  'id_token',
+  'api_key',
+  'apikey',
+  'authorization',
+  'session_id',
+  'sessionid'
+];
+
+/**
  * vConsole Remote - Lightweight remote debugging tool built on top of vConsole
  */
 class VConsoleRemote {
@@ -13,6 +67,8 @@ class VConsoleRemote {
       ...options
     };
 
+    this.security = this._normalizeSecurityOptions(options.security);
+
     const { serverOrigin, wsUrl } = this._parseServerUrls(this.options.server);
     this.serverOrigin = serverOrigin;
     this.wsUrl = wsUrl;
@@ -20,9 +76,14 @@ class VConsoleRemote {
     this.vConsole = null;
     this.ws = null;
     this.roomPin = null;
+    this.roomKey = null;
     this.remoteTab = null;
     this._tabContainer = null;
     this._qrCanvas = null;
+
+    // Pending developer authorization prompt
+    this._authPrompt = null;
+    this._authCountdownTimer = null;
 
     // Offline message buffer & request body cache
     this._queue = [];
@@ -44,6 +105,147 @@ class VConsoleRemote {
 
     // Initialize SDK
     this.init();
+  }
+
+  /**
+   * Resolve the security policy, defaulting to the safe end of every choice:
+   * masking on, remote evaluation off.
+   */
+  _normalizeSecurityOptions(provided) {
+    const input = provided || {};
+    const toLowerList = (list, fallback) => {
+      const source = Array.isArray(list) ? list : fallback;
+      return source.map(entry => String(entry).toLowerCase());
+    };
+
+    return {
+      maskSensitiveData: input.maskSensitiveData !== false,
+      sensitiveHeaders: toLowerList(input.sensitiveHeaders, DEFAULT_SENSITIVE_HEADERS),
+      sensitiveBodyKeys: toLowerList(input.sensitiveBodyKeys, DEFAULT_SENSITIVE_BODY_KEYS),
+      allowRemoteEval: input.allowRemoteEval === true
+    };
+  }
+
+  _isSensitiveHeader(name) {
+    return this.security.sensitiveHeaders.indexOf(String(name).toLowerCase()) !== -1;
+  }
+
+  _isSensitiveKey(name) {
+    return this.security.sensitiveBodyKeys.indexOf(String(name).toLowerCase()) !== -1;
+  }
+
+  /**
+   * Redact sensitive headers, preserving the auth scheme so the developer can
+   * still see which kind of credential was sent.
+   */
+  _maskHeaders(headers) {
+    if (!this.security.maskSensitiveData || !headers || typeof headers !== 'object') {
+      return headers;
+    }
+
+    const masked = {};
+    for (const key of Object.keys(headers)) {
+      const value = headers[key];
+      if (!this._isSensitiveHeader(key)) {
+        masked[key] = value;
+        continue;
+      }
+      const schemeMatch = typeof value === 'string' && value.match(/^(Bearer|Basic|Digest|Token)\s+/i);
+      masked[key] = schemeMatch ? `${schemeMatch[1]} ${REDACTED_HEADER}` : REDACTED_HEADER;
+    }
+    return masked;
+  }
+
+  /**
+   * Redact sensitive keys anywhere inside a JSON or form-encoded payload,
+   * leaving the surrounding structure intact so the body stays readable.
+   */
+  _maskBody(body) {
+    if (!this.security.maskSensitiveData || typeof body !== 'string' || body === '') {
+      return body;
+    }
+
+    try {
+      const parsed = JSON.parse(body);
+      return JSON.stringify(this._maskObject(parsed));
+    } catch (_) {
+      // Not JSON; fall through to form-encoded handling
+    }
+
+    if (/^[^=&\s]+=[^&]*(&[^=&\s]+=[^&]*)*$/.test(body)) {
+      return body
+        .split('&')
+        .map(pair => {
+          const idx = pair.indexOf('=');
+          if (idx === -1) return pair;
+          const key = pair.slice(0, idx);
+          let decodedKey = key;
+          try {
+            decodedKey = decodeURIComponent(key);
+          } catch (_) {}
+          return this._isSensitiveKey(decodedKey) ? `${key}=${REDACTED_VALUE}` : pair;
+        })
+        .join('&');
+    }
+
+    return body;
+  }
+
+  _maskObject(value, depth = 0, seen = new WeakSet()) {
+    if (depth > 8 || value === null || typeof value !== 'object') {
+      return value;
+    }
+    if (seen.has(value)) {
+      return '[Circular]';
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      return value.map(item => this._maskObject(item, depth + 1, seen));
+    }
+
+    const masked = {};
+    for (const key of Object.keys(value)) {
+      masked[key] = this._isSensitiveKey(key)
+        ? REDACTED_VALUE
+        : this._maskObject(value[key], depth + 1, seen);
+    }
+    return masked;
+  }
+
+  /**
+   * Redact credentials carried in a query string, which would otherwise leak
+   * through the URL shown in the network list.
+   */
+  _maskUrl(url) {
+    if (!this.security.maskSensitiveData || typeof url !== 'string') {
+      return url;
+    }
+    const queryIndex = url.indexOf('?');
+    if (queryIndex === -1) {
+      return url;
+    }
+
+    const base = url.slice(0, queryIndex);
+    const [query, ...hashParts] = url.slice(queryIndex + 1).split('#');
+    const maskedQuery = query
+      .split('&')
+      .map(pair => {
+        const idx = pair.indexOf('=');
+        if (idx === -1) return pair;
+        const key = pair.slice(0, idx);
+        let decodedKey = key;
+        try {
+          decodedKey = decodeURIComponent(key);
+        } catch (_) {}
+        return this._isSensitiveKey(decodedKey) || this._isSensitiveHeader(decodedKey)
+          ? `${key}=${REDACTED_VALUE}`
+          : pair;
+      })
+      .join('&');
+
+    const hash = hashParts.length ? `#${hashParts.join('#')}` : '';
+    return `${base}?${maskedQuery}${hash}`;
   }
 
   /**
@@ -345,7 +547,7 @@ class VConsoleRemote {
           request: {
             id: requestId,
             method,
-            url,
+            url: this._maskUrl(url),
             status,
             duration,
             timestamp: startTime
@@ -373,7 +575,7 @@ class VConsoleRemote {
           request: {
             id: requestId,
             method,
-            url,
+            url: this._maskUrl(url),
             status: 0,
             duration,
             timestamp: startTime,
@@ -483,7 +685,7 @@ class VConsoleRemote {
           request: {
             id: requestId,
             method,
-            url,
+            url: self._maskUrl(url),
             status,
             duration,
             timestamp: startTime
@@ -500,14 +702,30 @@ class VConsoleRemote {
   }
 
   /**
-   * Store network request data with FIFO eviction
+   * Store network request data with FIFO eviction.
+   * Every capture path funnels through here, so masking is applied once and the
+   * cache itself never holds an unredacted credential.
    */
   _storeNetworkRequest(id, data) {
     if (this._networkCache.size >= this._maxNetworkCache) {
       const firstKey = this._networkCache.keys().next().value;
       this._networkCache.delete(firstKey);
     }
-    this._networkCache.set(id, data);
+    this._networkCache.set(id, this._sanitizeNetworkRecord(data));
+  }
+
+  _sanitizeNetworkRecord(data) {
+    if (!this.security.maskSensitiveData || !data) {
+      return data;
+    }
+    return {
+      ...data,
+      url: this._maskUrl(data.url),
+      requestHeaders: this._maskHeaders(data.requestHeaders),
+      responseHeaders: this._maskHeaders(data.responseHeaders),
+      requestBody: this._maskBody(data.requestBody),
+      responseBody: this._maskBody(data.responseBody)
+    };
   }
 
   /**
@@ -571,7 +789,7 @@ class VConsoleRemote {
     const container = document.createElement('div');
     container.className = 'vconsole-remote-tab';
     container.style.padding = '16px';
-    container.style.color = '#333';
+    container.style.color = BrandColors.text;
     container.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
     // Status element
@@ -581,7 +799,7 @@ class VConsoleRemote {
     statusElement.style.padding = '10px 14px';
     statusElement.style.marginBottom = '14px';
     statusElement.style.borderRadius = '6px';
-    statusElement.style.backgroundColor = '#f5f5f5';
+    statusElement.style.backgroundColor = BrandColors.bgElevated;
     statusElement.style.textAlign = 'center';
     statusElement.style.fontWeight = '500';
     statusElement.style.fontSize = '14px';
@@ -596,8 +814,8 @@ class VConsoleRemote {
     pinElement.style.fontSize = '30px';
     pinElement.style.letterSpacing = '6px';
     pinElement.style.textAlign = 'center';
-    pinElement.style.color = '#07c160';
-    pinElement.style.backgroundColor = '#f0f9eb';
+    pinElement.style.color = BrandColors.primary;
+    pinElement.style.backgroundColor = BrandColors.bgElevated;
     pinElement.style.borderRadius = '8px';
     pinElement.textContent = this.roomPin ? `PIN: ${this._formatPin(this.roomPin)}` : 'PIN: ------';
     container.appendChild(pinElement);
@@ -609,7 +827,7 @@ class VConsoleRemote {
     qrWrapper.style.alignItems = 'center';
     qrWrapper.style.justifyContent = 'center';
     qrWrapper.style.padding = '12px';
-    qrWrapper.style.backgroundColor = '#ffffff';
+    qrWrapper.style.backgroundColor = '#FFFFFF';
     qrWrapper.style.borderRadius = '8px';
     qrWrapper.style.margin = '0 auto 12px auto';
     qrWrapper.style.width = '200px';
@@ -622,7 +840,7 @@ class VConsoleRemote {
     qrWrapper.appendChild(qrCanvas);
 
     const qrHint = document.createElement('div');
-    qrHint.style.color = '#666';
+    qrHint.style.color = BrandColors.textSecondary;
     qrHint.style.fontSize = '12px';
     qrHint.style.marginTop = '8px';
     qrHint.style.textAlign = 'center';
@@ -652,12 +870,195 @@ class VConsoleRemote {
       (typeof document !== 'undefined' && document.getElementById('vconsole-remote-qr'));
     if (!canvas || !pin) return;
 
-    const targetUrl = `${this.serverOrigin}/#/room/${pin}`;
+    const targetUrl = this._pairingUrl(pin);
     QRCode.toCanvas(canvas, targetUrl, { width: 180, margin: 2 }, (error) => {
       if (error && this._originalConsole && this._originalConsole.error) {
         this._originalConsole.error('[vConsole-Remote] QR Code render error:', error);
       }
     });
+  }
+
+  /**
+   * Render the full-screen Allow / Reject prompt. Until the device owner taps
+   * Allow, the server streams nothing to the waiting developer, so this prompt
+   * is the gate that a guessed PIN alone cannot pass.
+   */
+  _showAuthPrompt(data) {
+    if (typeof document === 'undefined' || !document.body) return;
+
+    this._dismissAuthPrompt();
+
+    const authId = data.authId || '';
+    const client = data.client || {};
+    const expiresIn = Number(data.expiresIn) > 0 ? Number(data.expiresIn) : 60;
+
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-vconsole-remote-auth', authId);
+    this._applyStyles(overlay, {
+      position: 'fixed',
+      inset: '0',
+      top: '0',
+      left: '0',
+      right: '0',
+      bottom: '0',
+      zIndex: '2147483647',
+      backgroundColor: BrandColors.overlay,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '20px',
+      boxSizing: 'border-box',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    });
+
+    const card = document.createElement('div');
+    this._applyStyles(card, {
+      width: '100%',
+      maxWidth: '340px',
+      backgroundColor: BrandColors.bgContainer,
+      color: BrandColors.text,
+      borderRadius: '12px',
+      padding: '20px',
+      boxSizing: 'border-box',
+      boxShadow: '0 18px 48px rgba(31, 30, 28, 0.28)'
+    });
+
+    const title = document.createElement('div');
+    title.textContent = '⚠️ Incoming Debug Connection';
+    this._applyStyles(title, {
+      fontSize: '16px',
+      fontWeight: '700',
+      marginBottom: '12px'
+    });
+    card.appendChild(title);
+
+    const body = document.createElement('div');
+    this._applyStyles(body, {
+      fontSize: '13.5px',
+      lineHeight: '1.6',
+      color: BrandColors.textSecondary,
+      marginBottom: '14px'
+    });
+    // textContent throughout: the description is derived from a request header
+    // and must never be parsed as markup.
+    body.textContent = `${client.description || 'An unknown client'} wants to view this device's logs.`;
+    card.appendChild(body);
+
+    const detail = document.createElement('div');
+    this._applyStyles(detail, {
+      fontSize: '12px',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      color: BrandColors.textSecondary,
+      backgroundColor: BrandColors.bgElevated,
+      borderRadius: '10px',
+      padding: '10px 12px',
+      marginBottom: '16px',
+      wordBreak: 'break-word'
+    });
+    detail.textContent = `IP: ${client.ip || 'unknown'}`;
+    card.appendChild(detail);
+
+    const countdown = document.createElement('div');
+    this._applyStyles(countdown, {
+      fontSize: '12px',
+      color: BrandColors.textTertiary,
+      textAlign: 'center',
+      marginBottom: '14px'
+    });
+    countdown.textContent = `Expires in ${expiresIn}s`;
+    card.appendChild(countdown);
+
+    const buttonRow = document.createElement('div');
+    this._applyStyles(buttonRow, { display: 'flex', gap: '10px' });
+
+    const rejectButton = document.createElement('button');
+    rejectButton.type = 'button';
+    rejectButton.textContent = 'Reject';
+    this._applyStyles(rejectButton, {
+      flex: '1',
+      height: '44px',
+      borderRadius: '8px',
+      border: `1px solid ${BrandColors.border}`,
+      backgroundColor: BrandColors.bgBase,
+      color: BrandColors.text,
+      fontSize: '15px',
+      fontWeight: '600',
+      cursor: 'pointer'
+    });
+    rejectButton.addEventListener('click', () => this._respondToAuth(authId, false));
+
+    const allowButton = document.createElement('button');
+    allowButton.type = 'button';
+    allowButton.textContent = 'Allow';
+    this._applyStyles(allowButton, {
+      flex: '1',
+      height: '44px',
+      borderRadius: '8px',
+      border: 'none',
+      backgroundColor: BrandColors.primary,
+      color: BrandColors.onPrimary,
+      fontSize: '15px',
+      fontWeight: '600',
+      cursor: 'pointer'
+    });
+    allowButton.addEventListener('click', () => this._respondToAuth(authId, true));
+
+    buttonRow.appendChild(rejectButton);
+    buttonRow.appendChild(allowButton);
+    card.appendChild(buttonRow);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    this._authPrompt = overlay;
+    this.updateConnectionStatus('Authorization Requested 🟡');
+
+    let remaining = expiresIn;
+    this._authCountdownTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        this._dismissAuthPrompt();
+        this.updateConnectionStatus('Waiting for Developer 🟡');
+        return;
+      }
+      countdown.textContent = `Expires in ${remaining}s`;
+    }, 1000);
+  }
+
+  _applyStyles(element, styles) {
+    for (const [property, value] of Object.entries(styles)) {
+      element.style[property] = value;
+    }
+  }
+
+  _respondToAuth(authId, approved) {
+    this._dismissAuthPrompt();
+    this._send({
+      type: 'auth_response',
+      authId,
+      approved,
+      timestamp: Date.now()
+    });
+    this.updateConnectionStatus(approved ? 'Developer Connected 🟢' : 'Connection Rejected 🟥');
+  }
+
+  _dismissAuthPrompt() {
+    if (this._authCountdownTimer) {
+      clearInterval(this._authCountdownTimer);
+      this._authCountdownTimer = null;
+    }
+    if (this._authPrompt && this._authPrompt.parentNode) {
+      this._authPrompt.parentNode.removeChild(this._authPrompt);
+    }
+    this._authPrompt = null;
+  }
+
+  /**
+   * Build the dashboard URL for a room. The room key is included when the
+   * server issued one, so scanning the QR carries both factors.
+   */
+  _pairingUrl(pin) {
+    const base = `${this.serverOrigin}/#/room/${pin}`;
+    return this.roomKey ? `${base}?key=${encodeURIComponent(this.roomKey)}` : base;
   }
 
   _formatPin(pin) {
@@ -703,9 +1104,9 @@ class VConsoleRemote {
   }
 
   getConnectionColor(status) {
-    if (status.includes('Connected') || status.includes('🟢')) return '#07c160';
-    if (status.includes('Waiting') || status.includes('🟡')) return '#fa8c16';
-    return '#f5222d';
+    if (status.includes('Connected') || status.includes('🟢')) return BrandColors.success;
+    if (status.includes('Waiting') || status.includes('🟡')) return BrandColors.warning;
+    return BrandColors.error;
   }
 
   /**
@@ -792,8 +1193,28 @@ class VConsoleRemote {
       case 'init':
       case 'room_pin':
         this.roomPin = data.pin || (data.message && data.message.pin) || null;
+        this.roomKey = data.key || (data.message && data.message.key) || null;
         this.updatePinDisplay();
         this.updateConnectionStatus('Waiting for Developer 🟡');
+        break;
+
+      case 'auth_request':
+        this._showAuthPrompt(data);
+        break;
+
+      case 'auth_cancelled':
+        this._dismissAuthPrompt();
+        this.updateConnectionStatus('Waiting for Developer 🟡');
+        break;
+
+      case 'session_expired':
+        this._dismissAuthPrompt();
+        this._destroyed = true;
+        this.updateConnectionStatus('Session Expired 🟥');
+        break;
+
+      case 'rate_limited':
+        this.updateConnectionStatus('Blocked: too many attempts 🟥');
         break;
 
       case 'dev_connected':
@@ -802,6 +1223,7 @@ class VConsoleRemote {
         break;
 
       case 'dev_disconnected':
+        this._dismissAuthPrompt();
         this.updateConnectionStatus('Waiting for Developer 🟡');
         break;
 
@@ -878,7 +1300,7 @@ class VConsoleRemote {
       if (typeof localStorage !== 'undefined') {
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
-          lsMap[key] = localStorage.getItem(key);
+          lsMap[key] = this._maskStorageValue(key, localStorage.getItem(key));
         }
       }
     } catch (_) {}
@@ -887,14 +1309,14 @@ class VConsoleRemote {
       if (typeof sessionStorage !== 'undefined') {
         for (let i = 0; i < sessionStorage.length; i++) {
           const key = sessionStorage.key(i);
-          ssMap[key] = sessionStorage.getItem(key);
+          ssMap[key] = this._maskStorageValue(key, sessionStorage.getItem(key));
         }
       }
     } catch (_) {}
 
     try {
       if (typeof document !== 'undefined') {
-        cookiesStr = document.cookie || '';
+        cookiesStr = this._maskCookieString(document.cookie || '');
       }
     } catch (_) {}
 
@@ -916,6 +1338,38 @@ class VConsoleRemote {
     };
 
     this._send(storagePayload);
+  }
+
+  /**
+   * Redact a storage entry whose key names a credential; values that are JSON
+   * objects are walked so a nested token is caught too.
+   */
+  _maskStorageValue(key, value) {
+    if (!this.security.maskSensitiveData) {
+      return value;
+    }
+    if (this._isSensitiveKey(key) || this._isSensitiveHeader(key)) {
+      return REDACTED_VALUE;
+    }
+    return this._maskBody(value);
+  }
+
+  /**
+   * Cookies are session credentials; every value is redacted unless masking is
+   * explicitly turned off.
+   */
+  _maskCookieString(cookies) {
+    if (!this.security.maskSensitiveData || !cookies) {
+      return cookies;
+    }
+    return cookies
+      .split('; ')
+      .filter(Boolean)
+      .map(pair => {
+        const idx = pair.indexOf('=');
+        return idx === -1 ? pair : `${pair.slice(0, idx)}=${REDACTED_VALUE}`;
+      })
+      .join('; ');
   }
 
   /**
@@ -1026,16 +1480,16 @@ class VConsoleRemote {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.fillStyle = '#1e1e1e';
+        ctx.fillStyle = '#1A1917';
         ctx.fillRect(0, 0, width, height);
 
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = '#F4F3EE';
         ctx.font = 'bold 20px monospace';
         ctx.textAlign = 'center';
         ctx.fillText('vConsole Remote Snapshot', width / 2, 80);
 
         ctx.font = '14px monospace';
-        ctx.fillStyle = '#aaaaaa';
+        ctx.fillStyle = '#B1ADA1';
         ctx.fillText(`PIN: ${this.roomPin || 'N/A'}`, width / 2, 120);
         ctx.fillText(new Date().toLocaleString(), width / 2, 150);
         ctx.fillText(`Viewport: ${width}x${height}`, width / 2, 180);
@@ -1054,6 +1508,17 @@ class VConsoleRemote {
    */
   _handleExecJS(data) {
     const code = data.code || '';
+
+    if (!this.security.allowRemoteEval) {
+      const refusal = 'Remote evaluation is disabled on this device (security.allowRemoteEval is false)';
+      this._send({
+        type: 'exec_result',
+        error: refusal,
+        output: refusal,
+        isError: true
+      });
+      return;
+    }
 
     try {
       // Indirect eval evaluates in global scope
@@ -1202,6 +1667,8 @@ class VConsoleRemote {
    */
   destroy() {
     this._destroyed = true;
+
+    this._dismissAuthPrompt();
 
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);

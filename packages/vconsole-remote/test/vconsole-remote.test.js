@@ -76,6 +76,7 @@ class MockElement {
   }
   appendChild(child) {
     this.childNodes.push(child);
+    child.parentNode = this;
     return child;
   }
   setAttribute(name, value) {
@@ -84,6 +85,33 @@ class MockElement {
   getAttribute(name) {
     const a = this.attributes.find(x => x.name === name);
     return a ? a.value : null;
+  }
+  addEventListener(event, fn) {
+    if (!this._listeners) this._listeners = {};
+    if (!this._listeners[event]) this._listeners[event] = [];
+    this._listeners[event].push(fn);
+  }
+  removeChild(child) {
+    const idx = this.childNodes.indexOf(child);
+    if (idx !== -1) this.childNodes.splice(idx, 1);
+    child.parentNode = null;
+    return child;
+  }
+  click() {
+    const cbs = (this._listeners && this._listeners['click']) || [];
+    cbs.forEach(cb => cb({ type: 'click' }));
+  }
+  querySelectorAll(selector) {
+    const wanted = selector.toUpperCase();
+    const found = [];
+    const walk = (node) => {
+      for (const child of node.childNodes || []) {
+        if (child.tagName === wanted) found.push(child);
+        walk(child);
+      }
+    };
+    walk(this);
+    return found;
   }
   getContext() {
     return {
@@ -103,6 +131,7 @@ const mockDocument = {
   title: 'Test App',
   cookie: 'sessionId=xyz123; user=alice',
   documentElement: new MockElement('html'),
+  body: new MockElement('body'),
   createElement(tag) {
     const el = new MockElement(tag);
     return el;
@@ -391,8 +420,29 @@ async function runTests() {
 
     const resp = ws.sentMessages.find(m => m.type === 'storage_data');
     assert.ok(resp, 'Must respond with type: storage_data');
-    assert.strictEqual(resp.data.localStorage.auth_token, 'jwt.123');
     assert.strictEqual(resp.data.sessionStorage.tab_id, 'tab-1');
+
+    // Masking is on by default: credentials never leave the device
+    assert.strictEqual(resp.data.localStorage.auth_token, '********');
+    assert.ok(!resp.data.cookies.includes('xyz123'), 'Cookie values must be redacted');
+    assert.ok(resp.data.cookies.includes('sessionId='), 'Cookie names stay visible');
+
+    instance.destroy();
+  });
+
+  // Test 8b: Masking is opt-out for developers debugging their own auth flows
+  test('Storage is sent unredacted when maskSensitiveData is false', () => {
+    const instance = new VConsoleRemote({
+      autoConnect: true,
+      security: { maskSensitiveData: false }
+    });
+    const ws = instance.ws;
+
+    localStorage.setItem('auth_token', 'jwt.123');
+    ws.simulateReceive({ type: 'pull_storage' });
+
+    const resp = ws.sentMessages.find(m => m.type === 'storage_data');
+    assert.strictEqual(resp.data.localStorage.auth_token, 'jwt.123');
     assert.ok(resp.data.cookies.includes('sessionId=xyz123'));
 
     instance.destroy();
@@ -437,7 +487,10 @@ async function runTests() {
 
   // Test 11: Remote REPL exec_js Evaluation
   await testAsync('Remote REPL exec_js evaluates code and returns exec_result', async () => {
-    const instance = new VConsoleRemote({ autoConnect: true });
+    const instance = new VConsoleRemote({
+      autoConnect: true,
+      security: { allowRemoteEval: true }
+    });
     const ws = instance.ws;
 
     // Synchronous execution
@@ -478,6 +531,206 @@ async function runTests() {
     ws.simulateReceive({ type: 'room_pin', pin: '654321' });
 
     assert.strictEqual(instance.roomPin, '654321');
+
+    instance.destroy();
+  });
+
+  // Test 11b: Remote evaluation is refused unless explicitly enabled
+  test('exec_js is refused when allowRemoteEval is false (default)', () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    globalThis.__vrPwned = false;
+    ws.simulateReceive({ type: 'exec_js', code: 'globalThis.__vrPwned = true' });
+
+    assert.strictEqual(globalThis.__vrPwned, false, 'Code must not execute on the device');
+
+    const resp = ws.sentMessages.find(m => m.type === 'exec_result');
+    assert.ok(resp, 'Must still answer the developer');
+    assert.strictEqual(resp.isError, true);
+    assert.ok(/disabled/i.test(resp.error), 'Must explain that evaluation is disabled');
+
+    instance.destroy();
+  });
+
+  // Test 11c: Sensitive request/response headers are redacted
+  test('Sensitive headers are redacted, auth scheme preserved', () => {
+    const instance = new VConsoleRemote({ autoConnect: false });
+
+    const masked = instance._maskHeaders({
+      'Authorization': 'Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig',
+      'Cookie': 'session=xyz987',
+      'X-Api-Key': 'sk_live_9931',
+      'Content-Type': 'application/json'
+    });
+
+    assert.strictEqual(masked['Authorization'], 'Bearer [REDACTED]');
+    assert.strictEqual(masked['Cookie'], '[REDACTED]');
+    assert.strictEqual(masked['X-Api-Key'], '[REDACTED]');
+    assert.strictEqual(masked['Content-Type'], 'application/json', 'Benign headers pass through');
+
+    instance.destroy();
+  });
+
+  // Test 11d: Sensitive JSON and form body keys are redacted at any depth
+  test('Sensitive body keys are redacted in JSON and form payloads', () => {
+    const instance = new VConsoleRemote({ autoConnect: false });
+
+    const json = JSON.parse(instance._maskBody(JSON.stringify({
+      user: 'alex',
+      password: 'mypassword',
+      profile: { ssn: '123-45-6789', city: 'Phnom Penh' },
+      cards: [{ card_number: '4111111111111111', label: 'primary' }]
+    })));
+
+    assert.strictEqual(json.user, 'alex');
+    assert.strictEqual(json.password, '********');
+    assert.strictEqual(json.profile.ssn, '********');
+    assert.strictEqual(json.profile.city, 'Phnom Penh', 'Non-sensitive nested keys survive');
+    assert.strictEqual(json.cards[0].card_number, '********');
+    assert.strictEqual(json.cards[0].label, 'primary');
+
+    const form = instance._maskBody('user=alex&password=hunter2&lang=km');
+    assert.strictEqual(form, 'user=alex&password=********&lang=km');
+
+    instance.destroy();
+  });
+
+  // Test 11e: Credentials in a query string are redacted
+  test('Sensitive query parameters are redacted in captured URLs', () => {
+    const instance = new VConsoleRemote({ autoConnect: false });
+
+    const masked = instance._maskUrl('https://api.example.com/v1/me?api_key=sk_live_1&page=2');
+    assert.ok(!masked.includes('sk_live_1'), 'Key value must not survive');
+    assert.ok(masked.includes('page=2'), 'Benign parameters survive');
+
+    assert.strictEqual(
+      instance._maskUrl('https://api.example.com/v1/me'),
+      'https://api.example.com/v1/me',
+      'URLs without a query string are untouched'
+    );
+
+    instance.destroy();
+  });
+
+  // Test 11f: A custom key list fully replaces the defaults
+  test('Custom sensitiveBodyKeys replace the built-in list', () => {
+    const instance = new VConsoleRemote({
+      autoConnect: false,
+      security: { sensitiveBodyKeys: ['internal_ref'] }
+    });
+
+    const masked = JSON.parse(instance._maskBody(JSON.stringify({
+      internal_ref: 'abc',
+      password: 'still-visible'
+    })));
+
+    assert.strictEqual(masked.internal_ref, '********');
+    assert.strictEqual(masked.password, 'still-visible', 'A custom list is authoritative');
+
+    instance.destroy();
+  });
+
+  // Test 11g: Captured network records are masked in the cache itself
+  test('Network cache stores masked headers and bodies', () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    instance._storeNetworkRequest('req_1', {
+      id: 'req_1',
+      method: 'POST',
+      url: 'https://api.example.com/login?token=leak',
+      status: 200,
+      duration: 12,
+      requestHeaders: { Authorization: 'Bearer secret-jwt' },
+      responseHeaders: { 'set-cookie': 'session=abc' },
+      requestBody: JSON.stringify({ password: 'hunter2' }),
+      responseBody: JSON.stringify({ access_token: 'tok_live' })
+    });
+
+    const cached = instance._networkCache.get('req_1');
+    assert.strictEqual(cached.requestHeaders.Authorization, 'Bearer [REDACTED]');
+    assert.strictEqual(cached.responseHeaders['set-cookie'], '[REDACTED]');
+    assert.ok(!cached.requestBody.includes('hunter2'));
+    assert.ok(!cached.responseBody.includes('tok_live'));
+    assert.ok(!cached.url.includes('leak'));
+
+    ws.simulateReceive({ type: 'pull_network_body', requestId: 'req_1' });
+    const resp = ws.sentMessages.find(m => m.type === 'network_body_data');
+    assert.ok(!JSON.stringify(resp).includes('tok_live'), 'Pulled body must stay redacted');
+
+    instance.destroy();
+  });
+
+  // Test 11h: The device approval prompt gates the pairing
+  test('auth_request renders an Allow/Reject prompt and answers the server', () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    ws.simulateReceive({
+      type: 'auth_request',
+      authId: 'auth-123',
+      expiresIn: 60,
+      client: { description: 'Chrome on macOS', ip: '110.23.xx.xx' }
+    });
+
+    assert.ok(instance._authPrompt, 'Prompt element must be mounted');
+
+    const buttons = instance._authPrompt.querySelectorAll('button');
+    assert.strictEqual(buttons.length, 2, 'Prompt must offer exactly Allow and Reject');
+
+    const allow = Array.from(buttons).find(b => b.textContent === 'Allow');
+    assert.ok(allow, 'Allow button must exist');
+    allow.click();
+
+    const resp = ws.sentMessages.find(m => m.type === 'auth_response');
+    assert.ok(resp, 'Must answer the server');
+    assert.strictEqual(resp.authId, 'auth-123');
+    assert.strictEqual(resp.approved, true);
+    assert.strictEqual(instance._authPrompt, null, 'Prompt must be dismissed after answering');
+
+    instance.destroy();
+  });
+
+  // Test 11i: Rejecting sends approved:false
+  test('Rejecting the prompt denies the developer', () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    ws.simulateReceive({
+      type: 'auth_request',
+      authId: 'auth-456',
+      expiresIn: 60,
+      client: { description: 'Firefox on Windows', ip: '203.0.xx.xx' }
+    });
+
+    const reject = Array.from(instance._authPrompt.querySelectorAll('button'))
+      .find(b => b.textContent === 'Reject');
+    reject.click();
+
+    const resp = ws.sentMessages.find(m => m.type === 'auth_response');
+    assert.strictEqual(resp.authId, 'auth-456');
+    assert.strictEqual(resp.approved, false);
+
+    instance.destroy();
+  });
+
+  // Test 11j: The QR code carries the room key issued by the server
+  test('Room key from the server is embedded in the pairing URL', () => {
+    const instance = new VConsoleRemote({ server: 'https://debug.example.com', autoConnect: true });
+    const ws = instance.ws;
+
+    ws.simulateReceive({ type: 'room_pin', pin: '482910', key: 'a8f9c73b9ea1b2c3' });
+
+    assert.strictEqual(instance.roomPin, '482910');
+    assert.strictEqual(instance.roomKey, 'a8f9c73b9ea1b2c3');
+
+    const pairingUrl = instance._pairingUrl('482910');
+    assert.strictEqual(
+      pairingUrl,
+      'https://debug.example.com/#/room/482910?key=a8f9c73b9ea1b2c3',
+      `QR URL must carry the PIN and key, got ${pairingUrl}`
+    );
 
     instance.destroy();
   });
