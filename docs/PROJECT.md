@@ -1,5 +1,12 @@
 # Project: vconsole-remote Code Review & Audit
 
+> **Historical document.** This is a code review and security audit of an
+> early revision of the project. It describes a layout that no longer exists
+> (`server/src/main.go`), and every issue it identifies has since been fixed.
+> See [docs/README.md](README.md#how-the-old-audit-findings-were-resolved) for
+> the resolution of each finding. Kept for the rationale it records, not as a
+> description of the current code.
+
 ## Architecture Overview
 `vconsole-remote` is a remote debugging solution designed to inspect mobile web apps running Tencent's vConsole from a desktop browser.
 The target architecture consists of:

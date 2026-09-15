@@ -22,9 +22,17 @@
     "react",
     "golang"
   ],
-  "author": "vConsole Remote Contributors",
+  "author": "chandara-code (https://github.com/chandara-code)",
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chandara-code/vconsole-remote.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chandara-code/vconsole-remote/issues"
+  },
+  "homepage": "https://github.com/chandara-code/vconsole-remote#readme"
 }

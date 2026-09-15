@@ -1,5 +1,9 @@
 # vConsole Remote Implementation Summary
 
+> **Historical document.** An implementation summary from when the project
+> scaffolding first landed. Kept for context; see the [README](../README.md)
+> for the current architecture.
+
 ## Project Structure
 
 We have successfully created the complete project structure for `vconsole-remote` as specified in the requirements:

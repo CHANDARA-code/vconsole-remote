@@ -1,10 +1,12 @@
 # vConsole Remote
 
-[![CI Pipeline](https://github.com/your-username/vconsole-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/vconsole-remote/actions)
+[![CI Pipeline](https://github.com/chandara-code/vconsole-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/chandara-code/vconsole-remote/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/vconsole-remote?logo=npm&color=CB3837)](https://www.npmjs.com/package/vconsole-remote)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org)
 [![Node Version](https://img.shields.io/badge/Node-20%2B-339933?logo=node.js)](https://nodejs.org)
 [![Ant Design](https://img.shields.io/badge/UI-Ant%20Design%205-1677FF?logo=antdesign)](https://ant.design)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-C15F3C.svg)](CONTRIBUTING.md)
 
 A lightweight, production-grade remote debugging tool built on top of [vConsole](https://github.com/tencent/vconsole).
 
@@ -275,12 +277,21 @@ prints a warning at boot when it is disabled.
 
 ### Reporting a vulnerability
 
-Please open a private security advisory rather than a public issue.
+Please use a [private security advisory](https://github.com/chandara-code/vconsole-remote/security/advisories/new)
+rather than a public issue — a public patch tells attackers how to hit
+deployments that have not updated yet. [SECURITY.md](SECURITY.md) covers what's
+in scope, what's a documented trade-off, and what response times to expect.
 
 ---
 ## Development & Contributing
 
-We welcome contributions from developers worldwide! Please review our [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md).
+Contributions are welcome. Start with the [Contributing Guide](CONTRIBUTING.md) —
+it covers the development setup, how to run each test suite, the security
+invariants that changes need to preserve, and where help is most useful. Please
+also read the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Found a security problem? Use a [private advisory](https://github.com/chandara-code/vconsole-remote/security/advisories/new),
+not a public issue or PR. See [SECURITY.md](SECURITY.md).
 
 ### Project Layout
 
@@ -303,7 +314,13 @@ vconsole-remote/
 │   ├── tier2-boundary.test.js
 │   ├── tier3-combination.test.js
 │   └── tier4-scenarios.test.js
+├── docs/
+│   ├── TEST_INFRA.md       # Test architecture & philosophy
+│   ├── RELEASING.md        # Release runbook (npm, tags, binaries)
+│   └── README.md           # Index, incl. historical design documents
 ├── .env.example            # Documented server configuration reference
+├── SECURITY.md             # Threat model, scope & disclosure policy
+├── CHANGELOG.md            # Keep a Changelog / SemVer history
 ├── Dockerfile              # Production multi-stage Docker build
 └── docker-compose.yml      # Production compose with the hardened defaults
 ```

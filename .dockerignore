@@ -1,0 +1,20 @@
+# The image needs only server/ sources: the dashboard is embedded into the Go
+# binary and the SDK ships over npm. Everything below is build-irrelevant.
+.git
+.github
+.agents
+docs
+test
+packages
+node_modules
+server/vconsole-remote
+Dockerfile
+.dockerignore
+docker-compose.yml
+.env
+.env.local
+README.md
+CONTRIBUTING.md
+CHANGELOG.md
+SECURITY.md
+CODE_OF_CONDUCT.md

@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-server:
     name: Go Server Tests
@@ -20,7 +27,18 @@ jobs:
           go-version: "1.22"
           cache-dependency-path: server/go.sum
 
-      - name: Verify Go Formatting & Vet
+      - name: Verify Go Formatting
+        run: |
+          cd server
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            echo "Run: gofmt -w server/"
+            exit 1
+          fi
+
+      - name: Vet
         run: |
           cd server
           go vet ./...
@@ -29,6 +47,25 @@ jobs:
         run: |
           cd server
           go test -v -race -cover ./...
+
+  vulncheck:
+    name: Go Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: server/go.sum
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          cd server
+          govulncheck ./...
 
   test-client:
     name: Client SDK Build & Tests
@@ -71,6 +108,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+          cache-dependency-path: server/go.sum
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -85,3 +123,40 @@ jobs:
       - name: Execute 4-Tier Test Suite
         run: |
           node test/run-all.js
+
+  docker:
+    name: Docker Image Builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: vconsole-remote:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke Test The Image
+        run: |
+          docker run -d --name vcr -p 8080:8080 vconsole-remote:ci
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8080/healthz > /dev/null; then
+              echo "Server is healthy:"
+              curl -s http://127.0.0.1:8080/healthz
+              docker rm -f vcr
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not become healthy in time. Logs:"
+          docker logs vcr
+          docker rm -f vcr
+          exit 1

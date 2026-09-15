@@ -12,6 +12,15 @@ All contributors and maintainers are expected to follow our [Code of Conduct](CO
 
 ---
 
+## Found a security problem?
+
+**Do not open a public issue or pull request for a vulnerability.** A public
+patch is a disclosure: it tells everyone how to attack deployments that have not
+updated yet. Report it privately through [GitHub Security Advisories](https://github.com/chandara-code/vconsole-remote/security/advisories/new)
+instead. [SECURITY.md](SECURITY.md) explains what's in scope and what to expect.
+
+---
+
 ## Project Architecture
 
 `vconsole-remote` consists of three core components:
@@ -28,6 +37,10 @@ All contributors and maintainers are expected to follow our [Code of Conduct](CO
    - In-memory ephemeral room management (no database required).
    - High-performance, concurrent-safe WebSocket message routing between device and developer browser.
    - Embeds the web dashboard via Go's `embed.FS` for single-binary deployment.
+   - Key files: `room.go` (pairing handshake, approval gate, room lifecycle),
+     `security.go` (configuration, rate limiter, client-IP and origin policy),
+     `main.go` (routing and pre-upgrade admission checks), `safeconn.go`
+     (concurrency-safe WebSocket wrapper).
 
 3. **Web Dashboard (`server/assets/index.html`)**:
    - Modern, responsive debugging interface built with ReactJS and Ant Design.
@@ -50,7 +63,7 @@ Ensure you have the following installed on your system:
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/vconsole-remote.git
+git clone https://github.com/chandara-code/vconsole-remote.git
 cd vconsole-remote
 ```
 
@@ -116,7 +129,21 @@ npm run test:all
 npm run test:client    # Client SDK unit tests (packages/vconsole-remote)
 npm run test:server    # Server unit tests (server/)
 npm test               # 4-Tier E2E test suite (test/run-all.js)
+
+# The server suite is also worth running under the race detector, which is
+# what CI does. The approval handshake is concurrent code.
+cd server && go test -race ./...
 ```
+
+`server/security_test.go` covers the properties that make a public deployment
+safe: the approval gate, brute-force blocking, single-developer occupancy, room
+key validation, session expiry and origin pinning. If you touch pairing or the
+limiter, expect to add to it.
+
+> The E2E harness starts the server with a deliberately high `PIN_ATTEMPT_LIMIT`,
+> because every client in the suite shares the loopback address and would
+> otherwise trip the real 5-per-minute budget partway through the run. The
+> limiter's production default is asserted in `server/security_test.go`.
 
 ### 4-Tier E2E Test Breakdown
 
@@ -124,6 +151,65 @@ npm test               # 4-Tier E2E test suite (test/run-all.js)
 - **Tier 2 (Boundary Cases)**: Malformed PINs, payload size stress, disconnect resilience, malformed packets.
 - **Tier 3 (Cross-Feature Combinations)**: High-concurrency traffic, multi-room isolation, simultaneous pull operations.
 - **Tier 4 (Real-World Scenarios)**: Full lifecycle debugging flow, <50ms latency SLA, <15MB server RAM constraint.
+
+---
+
+## Working on security-sensitive code
+
+Some parts of this project carry invariants that the whole threat model rests
+on. Changes there are welcome, but they need to keep these properties true:
+
+| Invariant | Where it lives | Test |
+| --- | --- | --- |
+| No room traffic reaches a developer before the device approves | `server/room.go` | `TestDeviceApprovalGrantsAccess` |
+| A room admits exactly one developer at a time | `server/room.go` | `TestSingleDeveloperOccupancy` |
+| A socket can only reach the room it was admitted for, never one named in a payload | `server/room.go` | `TestUnpairedDeveloperCannotReachRoom` |
+| Failed pairing attempts are bounded per IP, and proxy headers can't forge a new identity | `server/security.go` | `TestBruteForcePinAttemptsAreBlocked`, `TestClientIPTrustsProxyHeadersOnlyWhenConfigured` |
+| Credentials are redacted before they leave the device | `packages/vconsole-remote/src/index.js` | SDK masking tests |
+| Remote evaluation is off unless the app opts in | `packages/vconsole-remote/src/index.js` | `exec_js is refused when allowRemoteEval is false` |
+| PINs and room keys never reach logs | `server/main.go`, `server/room.go` | `TestMaskingHelpers` |
+
+A good way to check a test actually has teeth: break the implementation on
+purpose and confirm the test fails, then put it back. A security test that
+passes against broken code is worse than no test.
+
+If a change has to relax one of these, say so explicitly in the pull request
+description and explain the reasoning — that's a discussion worth having in the
+open, not something to slip through.
+
+---
+
+## What the CI has to pass
+
+Every pull request runs:
+
+- `gofmt` (formatting is enforced, not suggested), `go vet`, and
+  `go test -race -cover`
+- `govulncheck` against the Go dependency tree
+- Client SDK build and unit tests
+- The 4-tier E2E suite against a real server binary
+- A Docker image build plus a `/healthz` smoke test
+
+Run `npm run test:all` before pushing and most of this is already settled.
+
+---
+
+## Where help is most welcome
+
+- **Framework integrations** — first-class setup for React Native WebView,
+  Capacitor, Taro, or the WeChat/Alipay mini-program runtimes.
+- **Dashboard panels** — a timeline/waterfall view for network requests, or
+  log persistence across reconnects.
+- **Accessibility** — keyboard navigation and screen-reader passes over the
+  dashboard.
+- **Internationalisation** — the UI is English-only today.
+- **Deployment recipes** — Kubernetes manifests, Fly.io, Railway, or a Helm
+  chart.
+- **Documentation** — if something confused you while reading this, that's a
+  bug worth reporting.
+
+Issues labelled `good first issue` are scoped to be approachable without deep
+knowledge of the pairing protocol.
 
 ---
 
@@ -155,4 +241,12 @@ npm test               # 4-Tier E2E test suite (test/run-all.js)
 
 ## Questions or Need Help?
 
-Feel free to open an issue or start a discussion on GitHub. Happy coding!
+- **Bug or feature idea** — open an [issue](https://github.com/chandara-code/vconsole-remote/issues).
+- **Security problem** — use a [private advisory](https://github.com/chandara-code/vconsole-remote/security/advisories/new), not an issue.
+- **Anything else** — start a [discussion](https://github.com/chandara-code/vconsole-remote/discussions).
+
+Further reading: [docs/](docs/) for test architecture and the release process,
+[SECURITY.md](SECURITY.md) for the threat model, and the
+[README](README.md#security) for the security design and deployment checklist.
+
+Happy debugging!

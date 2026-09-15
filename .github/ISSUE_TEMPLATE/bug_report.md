@@ -27,6 +27,22 @@ A clear and concise description of what you expected to happen.
 - Node.js version: [e.g. 20.12.0, 22.0.0]
 - Go version: [e.g. 1.21, 1.22]
 - vConsole Remote version: [e.g. 1.0.0]
+- How the server is deployed: [e.g. local `go run .`, Docker, behind Cloudflare]
+
+**Server configuration**
+Pairing behaviour depends heavily on these, so please include them if the issue
+involves connecting, disconnecting, or data you did or didn't expect to see:
+
+- `REQUIRE_DEVICE_APPROVAL`: [default `true`]
+- `REQUIRE_ROOM_KEY`: [default `false`]
+- `TRUST_PROXY`: [default `false`]
+- `ALLOWED_ORIGINS`: [default empty]
+- SDK `security` options, if you set any: [e.g. `maskSensitiveData: false`]
 
 **Additional context**
 Add any other context, console logs, or screenshots about the problem here.
+
+> Please redact room PINs, room keys and any real credentials before pasting
+> logs. If the problem *is* a security weakness, close this and use a
+> [private advisory](https://github.com/chandara-code/vconsole-remote/security/advisories/new)
+> instead.

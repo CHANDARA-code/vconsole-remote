@@ -1,0 +1,120 @@
+name: Release
+
+# Publishes the client SDK to npm and attaches server binaries to the GitHub
+# release. Triggered by pushing a tag like v1.0.0.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify Before Publishing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: server/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: packages/vconsole-remote/package-lock.json
+
+      - name: Server tests
+        run: cd server && go test -race ./...
+
+      - name: SDK build and tests
+        run: |
+          cd packages/vconsole-remote
+          npm ci
+          npm run build
+          npm test
+
+      - name: Tag must match the SDK version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./packages/vconsole-remote/package.json').version")
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag v$tag does not match package.json version $pkg."
+            echo "Bump the version, commit, then retag."
+            exit 1
+          fi
+          echo "Tag and package version agree: $pkg"
+
+      - name: E2E suite
+        run: |
+          cd server && go build -o vconsole-remote . && cd ..
+          node test/run-all.js
+
+  publish-npm:
+    name: Publish SDK to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for npm provenance attestation
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+          cache-dependency-path: packages/vconsole-remote/package-lock.json
+
+      - name: Build
+        run: |
+          cd packages/vconsole-remote
+          npm ci
+          npm run build
+
+      - name: Publish
+        run: |
+          cd packages/vconsole-remote
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  release-binaries:
+    name: Attach Server Binaries
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: server/go.sum
+
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: |
+          cd server
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags="-s -w" \
+            -o vconsole-remote-${{ matrix.goos }}-${{ matrix.goarch }} .
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: server/vconsole-remote-${{ matrix.goos }}-${{ matrix.goarch }}
+          generate_release_notes: true

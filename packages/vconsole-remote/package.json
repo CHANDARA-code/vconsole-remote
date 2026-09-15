@@ -29,7 +29,7 @@
     "web",
     "devtools"
   ],
-  "author": "Developer",
+  "author": "chandara-code (https://github.com/chandara-code)",
   "license": "MIT",
   "dependencies": {
     "qrcode": "^1.5.4",
@@ -38,6 +38,20 @@
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.7",
     "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-terser": "^1.0.0",
     "rollup": "^4.24.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chandara-code/vconsole-remote.git",
+    "directory": "packages/vconsole-remote"
+  },
+  "bugs": {
+    "url": "https://github.com/chandara-code/vconsole-remote/issues"
+  },
+  "homepage": "https://github.com/chandara-code/vconsole-remote#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

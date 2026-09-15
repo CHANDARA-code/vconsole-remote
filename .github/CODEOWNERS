@@ -1,0 +1,11 @@
+# Default owner for everything.
+*                           @chandara-code
+
+# Security-critical paths. Changes here need a careful second read: the pairing
+# handshake, the rate limiter and the client-side masking are the controls that
+# make a public deployment safe.
+/server/room.go             @chandara-code
+/server/security.go         @chandara-code
+/server/main.go             @chandara-code
+/SECURITY.md                @chandara-code
+/packages/vconsole-remote/src/index.js  @chandara-code

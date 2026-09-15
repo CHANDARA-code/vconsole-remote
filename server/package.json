@@ -17,12 +17,19 @@
     "devtools",
     "golang"
   ],
-  "author": "Developer",
+  "author": "chandara-code (https://github.com/chandara-code)",
   "license": "MIT",
-  "dependencies": {
-    "go": "^1.21"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chandara-code/vconsole-remote.git",
+    "directory": "server"
   },
-  "devDependencies": {
-    "go": "^1.21"
+  "bugs": {
+    "url": "https://github.com/chandara-code/vconsole-remote/issues"
+  },
+  "homepage": "https://github.com/chandara-code/vconsole-remote#readme",
+  "private": true,
+  "engines": {
+    "go": ">=1.21"
   }
 }

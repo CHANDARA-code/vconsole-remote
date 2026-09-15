@@ -1,5 +1,9 @@
 # Test Readiness & Verification Report (TEST_READY.md)
 
+> **Historical document.** A point-in-time test-readiness report. The same
+> suites now run on every pull request in CI, which is the authoritative
+> signal. See [TEST_INFRA.md](TEST_INFRA.md) for the current test architecture.
+
 **Date**: 2026-09-04  
 **Track**: E2E Testing Track (E2E-Track)  
 **Status**: **100% READY & PASSING**  

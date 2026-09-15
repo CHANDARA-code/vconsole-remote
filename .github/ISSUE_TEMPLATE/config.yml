@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/chandara-code/vconsole-remote/security/advisories/new
+    about: Please report vulnerabilities privately, never as a public issue. A public report tells attackers how to hit deployments that have not updated yet.
+
+  - name: 💬 Questions and ideas
+    url: https://github.com/chandara-code/vconsole-remote/discussions
+    about: Ask how something works, share what you built, or float an idea before opening an issue.
+
+  - name: 📖 Security model and deployment checklist
+    url: https://github.com/chandara-code/vconsole-remote#security
+    about: Before reporting a pairing or privacy concern, check whether it's a documented trade-off.

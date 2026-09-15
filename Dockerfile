@@ -1,51 +1,42 @@
-# Multi-stage build for vConsole Remote
+# Multi-stage build for the vConsole Remote broker.
+#
+# The dashboard is compiled into the binary via Go's embed.FS, and the client
+# SDK ships separately over npm, so the image needs nothing but the Go build.
 
-# Stage 1: Build the Client SDK
-FROM node:20-alpine AS sdk-builder
-
-WORKDIR /app
-
-# Install dependencies
-COPY packages/vconsole-remote/package*.json ./
-RUN npm ci
-
-# Copy source code and build UMD & ESM bundles
-COPY packages/vconsole-remote/rollup.config.js ./
-COPY packages/vconsole-remote/src/ ./src/
-RUN npm run build
-
-# Stage 2: Build Go binary with embedded assets
+# Stage 1: Build the static Go binary with embedded assets
 FROM golang:1.22-alpine AS go-builder
 
 WORKDIR /app
 
-# Install git for module fetching if needed
-RUN apk add --no-cache git
-
-# Copy go mod and sum files
+# Dependencies first, so the module cache survives source-only changes
 COPY server/go.mod server/go.sum ./
-
-# Download dependencies
 RUN go mod download
 
-# Copy server Go source code and embedded assets
 COPY server/*.go ./
 COPY server/assets/ ./assets/
 
-# Build static Linux binary with embedded assets
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vconsole-remote .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o vconsole-remote .
 
-# Stage 3: Minimal runner
-FROM alpine:latest AS runner
+# Stage 2: Minimal runtime
+FROM alpine:3.20 AS runner
 
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
+LABEL org.opencontainers.image.title="vConsole Remote" \
+      org.opencontainers.image.description="Remote debugging broker for mobile web apps" \
+      org.opencontainers.image.source="https://github.com/chandara-code/vconsole-remote" \
+      org.opencontainers.image.licenses="MIT"
 
-# Copy the binary from the previous stage
-COPY --from=go-builder /app/vconsole-remote .
+RUN apk --no-cache add ca-certificates wget \
+    && adduser -D -H -u 10001 vconsole
 
-# Expose port
+WORKDIR /app
+COPY --from=go-builder /app/vconsole-remote /app/vconsole-remote
+
+# Rooms live only in memory, so the container needs no writable state
+USER vconsole
+
 EXPOSE 8080
 
-# Run the binary
-CMD ["./vconsole-remote"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --spider -q http://127.0.0.1:8080/healthz || exit 1
+
+ENTRYPOINT ["/app/vconsole-remote"]
