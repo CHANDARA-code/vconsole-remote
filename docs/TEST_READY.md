@@ -7,7 +7,7 @@
 **Date**: 2026-09-04  
 **Track**: E2E Testing Track (E2E-Track)  
 **Status**: **100% READY & PASSING**  
-**Working Directory**: `/Users/chandara-dgc/Documents/ask_anythings/vconsole-remote`  
+**Working Directory**: repository root  
 **Runtime Environment**: macOS (Darwin arm64), Go `go1.27.0`, Node.js `v24.12.0`  
 
 ---
