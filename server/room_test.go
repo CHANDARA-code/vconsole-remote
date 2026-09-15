@@ -242,6 +242,34 @@ func TestRoomLifecycleAndPairing(t *testing.T) {
 		t.Fatalf("Developer connect_room write failed: %v", err)
 	}
 
+	// Developer is held pending until the device owner approves
+	var pendingMsg Message
+	if err := safeDev.ReadJSON(&pendingMsg); err != nil {
+		t.Fatalf("Developer read auth_pending failed: %v", err)
+	}
+	if pendingMsg.Type != "auth_pending" {
+		t.Fatalf("Expected auth_pending, got %+v", pendingMsg)
+	}
+
+	// Device receives the approval prompt and allows the connection
+	var authReq Message
+	if err := safeDevice.ReadJSON(&authReq); err != nil {
+		t.Fatalf("Device read auth_request failed: %v", err)
+	}
+	if authReq.Type != "auth_request" || authReq.AuthId == "" {
+		t.Fatalf("Expected auth_request with an authId, got %+v", authReq)
+	}
+	if authReq.AuthId != pendingMsg.AuthId {
+		t.Fatalf("authId mismatch: device %s vs developer %s", authReq.AuthId, pendingMsg.AuthId)
+	}
+	if err := safeDevice.WriteJSON(map[string]interface{}{
+		"type":     "auth_response",
+		"authId":   authReq.AuthId,
+		"approved": true,
+	}); err != nil {
+		t.Fatalf("Device auth_response write failed: %v", err)
+	}
+
 	// Developer reads confirmation
 	var devConfirm Message
 	if err := safeDev.ReadJSON(&devConfirm); err != nil {
@@ -390,7 +418,31 @@ func TestRoomLifecycleAndPairing(t *testing.T) {
 	safeDev2 := NewSafeConn(devWS2)
 	defer safeDev2.Close()
 
-	// Dev receives room_connected immediately
+	// Reconnecting still requires a fresh approval from the device owner
+	var pendingMsg2 Message
+	if err := safeDev2.ReadJSON(&pendingMsg2); err != nil {
+		t.Fatalf("Developer reconnect auth_pending failed: %v", err)
+	}
+	if pendingMsg2.Type != "auth_pending" {
+		t.Fatalf("Expected auth_pending on reconnect, got %+v", pendingMsg2)
+	}
+
+	var authReq2 Message
+	if err := safeDevice.ReadJSON(&authReq2); err != nil {
+		t.Fatalf("Device read auth_request on reconnect failed: %v", err)
+	}
+	if authReq2.Type != "auth_request" {
+		t.Fatalf("Expected auth_request on reconnect, got %+v", authReq2)
+	}
+	if err := safeDevice.WriteJSON(map[string]interface{}{
+		"type":     "auth_response",
+		"authId":   authReq2.AuthId,
+		"approved": true,
+	}); err != nil {
+		t.Fatalf("Device auth_response write on reconnect failed: %v", err)
+	}
+
+	// Dev receives room_connected once approved
 	var devConfirm2 Message
 	if err := safeDev2.ReadJSON(&devConfirm2); err != nil {
 		t.Fatalf("Developer reconnect confirmation failed: %v", err)
@@ -443,6 +495,7 @@ func TestRoomReaper(t *testing.T) {
 		p := "10000" + strconv.Itoa(i)
 		rooms[p] = &Room{
 			ID:         p,
+			CreatedAt:  time.Now(),
 			LastActive: time.Now(),
 		}
 	}
@@ -452,6 +505,7 @@ func TestRoomReaper(t *testing.T) {
 		p := "10000" + strconv.Itoa(i)
 		rooms[p] = &Room{
 			ID:         p,
+			CreatedAt:  time.Now(),
 			LastActive: time.Now().Add(-2 * time.Hour),
 		}
 	}
@@ -494,6 +548,7 @@ func TestRoomReaper(t *testing.T) {
 	testStalePin := "999888"
 	rooms[testStalePin] = &Room{
 		ID:         testStalePin,
+		CreatedAt:  time.Now(),
 		LastActive: time.Now().Add(-1 * time.Second),
 	}
 	roomsMu.Unlock()

@@ -210,15 +210,39 @@ async function runTier2() {
             device.close();
         });
 
-        await test('2.4 Second developer connects to already active room', async () => {
+        await test('2.4 Second developer is locked out of an already active room', async () => {
             const device = await createDeviceClient(serverHandle.wsUrl);
             const dev1 = await createDevClient(serverHandle.wsUrl, device.roomPin);
-            const dev2 = await createDevClient(serverHandle.wsUrl, device.roomPin);
 
-            // Both or second dev is accepted
-            assert(dev2.pin === device.roomPin, 'Second dev paired successfully');
+            assert(dev1.pin === device.roomPin, 'First dev paired successfully');
+
+            // A room admits exactly one developer at a time
+            let secondPaired = false;
+            let refusal = null;
+            try {
+                const dev2 = await createDevClient(serverHandle.wsUrl, device.roomPin);
+                secondPaired = true;
+                dev2.close();
+            } catch (err) {
+                refusal = err.message || String(err);
+            }
+
+            assert(!secondPaired, 'Second dev must be refused while the room is occupied');
+            assert(/busy|in use|refused|error|closed/i.test(refusal), `Refusal explains the lockout, got: ${refusal}`);
 
             dev1.close();
+            device.close();
+        });
+
+        await test('2.4b Room accepts a new developer after the first one leaves', async () => {
+            const device = await createDeviceClient(serverHandle.wsUrl);
+            const dev1 = await createDevClient(serverHandle.wsUrl, device.roomPin);
+            dev1.close();
+            await sleep(150);
+
+            const dev2 = await createDevClient(serverHandle.wsUrl, device.roomPin);
+            assert(dev2.pin === device.roomPin, 'Freed room admits the next developer');
+
             dev2.close();
             device.close();
         });

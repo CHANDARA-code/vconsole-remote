@@ -151,17 +151,28 @@ async function startGoServer(options = {}) {
     const port = options.port || (await findFreePort());
     let serverProcess = null;
 
+    // Every client in this suite shares the loopback address, so the production
+    // brute-force budget (5 failures/min/IP) would block the whole run after the
+    // handful of deliberately-invalid PIN cases. The limiter itself is covered by
+    // the Go tests in server/security_test.go, which assert the real default.
+    const serverEnv = {
+        ...process.env,
+        PORT: String(port),
+        PIN_ATTEMPT_LIMIT: options.pinAttemptLimit || '100000',
+        ...(options.env || {})
+    };
+
     if (fs.existsSync(binaryPath)) {
         serverProcess = spawn(binaryPath, [], {
             cwd: serverDir,
-            env: { ...process.env, PORT: String(port) },
+            env: serverEnv,
             stdio: ['ignore', 'pipe', 'pipe']
         });
     } else {
         // Fall back to go run .
         serverProcess = spawn('go', ['run', '.'], {
             cwd: serverDir,
-            env: { ...process.env, PORT: String(port) },
+            env: serverEnv,
             stdio: ['ignore', 'pipe', 'pipe']
         });
     }
@@ -571,6 +582,8 @@ async function createDeviceClient(wsUrl, options = {}) {
     };
 
     let roomPin = null;
+    let roomKey = null;
+    let lastAuthRequest = null;
 
     await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('Device WebSocket open timeout')), 4000);
@@ -595,6 +608,22 @@ async function createDeviceClient(wsUrl, options = {}) {
         // Capture PIN if announcement
         if ((msg.type === 'room_pin' || msg.type === 'init') && msg.pin) {
             roomPin = msg.pin;
+            if (msg.key) roomKey = msg.key;
+        }
+
+        // Device owner's Allow / Reject decision. Tests exercise the real
+        // approval gate rather than bypassing it; pass autoApprove: false to
+        // simulate the owner rejecting a connection.
+        if (msg.type === 'auth_request') {
+            lastAuthRequest = msg;
+            if (options.autoApprove !== false) {
+                sendJson({
+                    type: 'auth_response',
+                    authId: msg.authId,
+                    approved: options.autoApprove !== 'reject',
+                    timestamp: Date.now()
+                });
+            }
         }
 
         // Automatic responders if enabled
@@ -721,6 +750,14 @@ async function createDeviceClient(wsUrl, options = {}) {
         roomPin,
         deviceState,
         getPin: () => roomPin,
+        getKey: () => roomKey,
+        getLastAuthRequest: () => lastAuthRequest,
+        approveAuth: (approved = true) => sendJson({
+            type: 'auth_response',
+            authId: lastAuthRequest ? lastAuthRequest.authId : '',
+            approved,
+            timestamp: Date.now()
+        }),
         sendLog: (level, message, args = []) => {
             sendJson({
                 type: 'log',
