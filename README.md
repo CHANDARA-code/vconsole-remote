@@ -3,7 +3,7 @@
 [![CI Pipeline](https://github.com/chandara-code/vconsole-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/chandara-code/vconsole-remote/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/vconsole-remote?logo=npm&color=CB3837)](https://www.npmjs.com/package/vconsole-remote)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org)
 [![Node Version](https://img.shields.io/badge/Node-20%2B-339933?logo=node.js)](https://nodejs.org)
 [![Ant Design](https://img.shields.io/badge/UI-Ant%20Design%205-1677FF?logo=antdesign)](https://ant.design)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-C15F3C.svg)](CONTRIBUTING.md)
@@ -11,6 +11,12 @@
 A lightweight, production-grade remote debugging tool built on top of [vConsole](https://github.com/tencent/vconsole).
 
 Inspect mobile web apps, PWAs, and mini-apps live from any desktop browser with an interactive Chrome DevTools-style dashboard powered by **ReactJS** and **Ant Design**.
+
+> **Just want to debug something?** Point the SDK at the hosted broker —
+> `server: "wss://debug.leavchandara.com"` — and open
+> <https://debug.leavchandara.com> on your desktop. No server to deploy, no
+> account. See [Option A](#option-a--use-the-hosted-broker-nothing-to-deploy)
+> for what it does and does not guarantee.
 
 ---
 
@@ -72,7 +78,9 @@ npm install vconsole-remote
 import VConsoleRemote from "vconsole-remote";
 
 const vConsole = new VConsoleRemote({
-  server: "wss://debug.yourcompany.com", // or ws://192.168.1.50:8080
+  // Public hosted broker — nothing to deploy. Self-hosting? Point this at your
+  // own origin instead: wss://debug.yourcompany.com, or ws://192.168.1.50:8080.
+  server: "wss://debug.leavchandara.com",
   theme: "dark",
   autoConnect: true,
 
@@ -103,14 +111,62 @@ for the full default key list and exactly what each setting changes.
 <script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"></script>
 <script>
   const vConsole = new window.VConsoleRemote({
-    server: "wss://debug.yourcompany.com",
+    server: "wss://debug.leavchandara.com",
   });
 </script>
 ```
 
 ---
 
-### 2. Server Deployment
+### 2. Pick a Broker
+
+The broker is the only piece that has to be reachable by both your phone and your
+desktop. You have two options, and the SDK snippet above is the only thing that
+changes between them.
+
+#### Option A — Use the hosted broker (nothing to deploy)
+
+A public instance runs at **`https://debug.leavchandara.com`**. Point the SDK at
+it and you can debug a device in under a minute, with no server, no container and
+no TLS certificate of your own:
+
+```javascript
+const vConsole = new VConsoleRemote({
+  server: "wss://debug.leavchandara.com",
+});
+```
+
+Then:
+
+1. Load your page on the phone. The floating HUD shows a **6-digit PIN** and a QR code.
+2. On your desktop, open **<https://debug.leavchandara.com>** and enter that PIN
+   (or scan the QR, which carries the PIN and the room key together).
+3. The phone raises an **Allow / Deny** prompt naming the requesting browser. Tap
+   **Allow** — until you do, the dashboard receives nothing at all.
+
+That is the whole flow. What you should know about the hosted instance before you
+point a real device at it:
+
+| | |
+|---|---|
+| **Who can see your data** | Only a dashboard that you approve on the device, for the life of that session. |
+| **What is stored** | Nothing. Rooms live in memory only — no database, no disk, no log of URLs (the access log records the path, never the PIN or key). |
+| **Session limits** | 8h hard cap, destroyed after 30m idle, one developer per room. |
+| **Brute force** | 5 failed PIN attempts per IP per minute, then a 10m block. |
+| **Masking** | Credentials are redacted **on the device**, before anything is sent — see [Client-side data masking](#2-client-side-data-masking). |
+| **Remote eval** | Off unless you opt in with `security.allowRemoteEval: true`. |
+| **Guarantees** | None. It is a convenience instance with no uptime commitment, and it can restart at any time — which drops live sessions, since nothing is persisted. |
+
+It is a good fit for debugging a staging build, reproducing a bug on a borrowed
+handset, or trying the tool out. Treat it the way you would any third-party
+service: the masking defaults are on for a reason, and if your logs carry data
+that must not leave your infrastructure, use Option B.
+
+#### Option B — Self-host
+
+Run your own broker when you need an uptime guarantee, a private network, or data
+that must not transit someone else's host. Every deployment path below produces a
+server identical to the hosted one.
 
 #### Running Locally with Go
 
@@ -134,11 +190,55 @@ security posture already set (device approval, origin pinning, proxy-aware rate
 limiting, session caps, read-only root filesystem):
 
 ```bash
-docker-compose up -d
+cp .env.example .env    # then set ALLOWED_ORIGINS to your dashboard hostname
+docker compose up -d
 ```
 
-Adjust `ALLOWED_ORIGINS` to your own hostname before deploying. Every setting is
-documented in [`.env.example`](.env.example).
+Every setting is documented in [`.env.example`](.env.example). Two of them are
+read by Compose rather than the server, and they are the ones that decide how the
+broker is exposed:
+
+| Variable | Default | Use |
+| --- | --- | --- |
+| `BIND_ADDR` | `0.0.0.0` | Set to `127.0.0.1` when a reverse proxy terminates TLS, so the only route in is through that proxy. |
+| `HOST_PORT` | `8080` | Host port the container publishes on. |
+
+#### Behind a reverse proxy
+
+The broker is a WebSocket hub, so the `/ws` location needs a real `Upgrade` hop
+and a read timeout longer than `ROOM_MAX_DURATION` — otherwise the proxy, not the
+server, decides when a debug session ends:
+
+```nginx
+location = /ws {
+    proxy_pass http://127.0.0.1:8080/ws;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;  # map $http_upgrade -> upgrade/close
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_buffering off;
+    proxy_read_timeout 9h;   # must outlast ROOM_MAX_DURATION
+}
+```
+
+Set `TRUST_PROXY=true` at the same time, so the brute-force limiter counts the
+real client address instead of blocking every user behind the proxy at once. Turn
+it on **only** when a proxy you control is genuinely in front: with it on and
+nothing in front, anyone can forge `X-Forwarded-For` and walk past the limiter.
+
+#### Continuous deployment
+
+[`.github/workflows/deploy-vps.yml`](.github/workflows/deploy-vps.yml) redeploys
+on every push to `main` (including the merge commit from a PR) using a
+self-hosted runner labelled `vconsole`. It runs
+[`scripts/deploy.sh`](scripts/deploy.sh), which syncs the live checkout, builds
+the image *before* touching the running container, restarts it, and then verifies
+both the loopback health endpoint and the public URL — failing the job if either
+does not answer. [`scripts/setup-runner.sh`](scripts/setup-runner.sh) registers
+the runner on a fresh box.
+
+Rooms are in-memory only, so a deploy drops live debug sessions by design; there
+is no state to migrate.
 
 ---
 

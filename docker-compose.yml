@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   vconsole-remote:
     build:
@@ -9,31 +7,35 @@ services:
     container_name: vconsole-remote
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # Defaults to 8080 on every interface, which is what you want when the
+      # container IS the edge. Behind a reverse proxy set BIND_ADDR=127.0.0.1
+      # in .env so the broker is only reachable through the proxy.
+      - "${BIND_ADDR:-0.0.0.0}:${HOST_PORT:-8080}:8080"
     environment:
       - PORT=8080
 
       # Behind Cloudflare (or any proxy you control), turn this on so the rate
       # limiter sees real client addresses instead of the proxy's.
-      - TRUST_PROXY=true
+      - TRUST_PROXY=${TRUST_PROXY:-true}
 
       # Pin the dashboard origin in production.
-      - ALLOWED_ORIGINS=https://debug.leavchandara.com
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
 
       # The device owner must approve every incoming debug session.
-      - REQUIRE_DEVICE_APPROVAL=true
-      - AUTH_APPROVAL_TIMEOUT=60s
+      - REQUIRE_DEVICE_APPROVAL=${REQUIRE_DEVICE_APPROVAL:-true}
+      - AUTH_APPROVAL_TIMEOUT=${AUTH_APPROVAL_TIMEOUT:-60s}
 
       # Brute-force budget per client IP.
-      - PIN_ATTEMPT_LIMIT=5
-      - PIN_ATTEMPT_WINDOW=1m
-      - PIN_BLOCK_DURATION=10m
+      - PIN_ATTEMPT_LIMIT=${PIN_ATTEMPT_LIMIT:-5}
+      - PIN_ATTEMPT_WINDOW=${PIN_ATTEMPT_WINDOW:-1m}
+      - PIN_BLOCK_DURATION=${PIN_BLOCK_DURATION:-10m}
 
       # Session lifecycle: full workday cap, half-hour idle cutoff.
-      - ROOM_MAX_DURATION=8h
-      - ROOM_IDLE_TIMEOUT=30m
+      - ROOM_MAX_DURATION=${ROOM_MAX_DURATION:-8h}
+      - ROOM_IDLE_TIMEOUT=${ROOM_IDLE_TIMEOUT:-30m}
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
+      # GET, not --spider: --spider sends HEAD, which /healthz answers 405.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -41,3 +43,8 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
