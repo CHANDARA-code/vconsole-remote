@@ -65,11 +65,11 @@ npm install vconsole-remote
 ```
 
 ```javascript
-import VConsoleRemote from 'vconsole-remote';
+import VConsoleRemote from "vconsole-remote";
 
 const vConsole = new VConsoleRemote({
-  server: 'wss://debug.yourcompany.com', // or ws://192.168.1.50:8080
-  theme: 'dark',
+  server: "wss://debug.yourcompany.com", // or ws://192.168.1.50:8080
+  theme: "dark",
   autoConnect: true,
 });
 ```
@@ -80,7 +80,7 @@ const vConsole = new VConsoleRemote({
 <script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"></script>
 <script>
   const vConsole = new window.VConsoleRemote({
-    server: 'wss://debug.yourcompany.com'
+    server: "wss://debug.yourcompany.com",
   });
 </script>
 ```
@@ -107,7 +107,7 @@ docker run -p 8080:8080 vconsole-remote
 #### Running with Docker Compose
 
 ```yaml
-version: '3.8'
+version: "3.8"
 services:
   vconsole-remote:
     build: .
