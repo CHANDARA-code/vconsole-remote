@@ -1,0 +1,30 @@
+{
+  "name": "vconsole-remote-workspace",
+  "version": "1.0.0",
+  "description": "Lightweight, production-grade remote debugging tool built on top of vConsole",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "npm run build --prefix packages/vconsole-remote",
+    "build:server": "cd server && go build -o vconsole-remote .",
+    "start": "cd server && go run .",
+    "test": "node test/run-all.js",
+    "test:client": "npm test --prefix packages/vconsole-remote",
+    "test:server": "cd server && go test -v ./...",
+    "test:all": "npm run test:client && npm run test:server && npm run test"
+  },
+  "keywords": [
+    "vconsole",
+    "remote-debugging",
+    "devtools",
+    "mobile-debugging",
+    "ant-design",
+    "react",
+    "golang"
+  ],
+  "author": "vConsole Remote Contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

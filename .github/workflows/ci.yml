@@ -1,0 +1,87 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-server:
+    name: Go Server Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: server/go.sum
+
+      - name: Verify Go Formatting & Vet
+        run: |
+          cd server
+          go vet ./...
+
+      - name: Run Go Unit Tests
+        run: |
+          cd server
+          go test -v -race -cover ./...
+
+  test-client:
+    name: Client SDK Build & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: packages/vconsole-remote/package-lock.json
+
+      - name: Install Client Dependencies
+        run: |
+          cd packages/vconsole-remote
+          npm ci
+
+      - name: Build Client SDK
+        run: |
+          cd packages/vconsole-remote
+          npm run build
+
+      - name: Run Client Unit Tests
+        run: |
+          cd packages/vconsole-remote
+          npm test
+
+  test-e2e:
+    name: 4-Tier E2E Verification
+    needs: [test-server, test-client]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Go Server Binary
+        run: |
+          cd server
+          go build -o vconsole-remote .
+
+      - name: Execute 4-Tier Test Suite
+        run: |
+          node test/run-all.js

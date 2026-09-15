@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  vconsole-remote:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vconsole-remote:latest
+    container_name: vconsole-remote
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080

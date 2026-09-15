@@ -1,0 +1,28 @@
+{
+  "name": "vconsole-remote-server",
+  "version": "1.0.0",
+  "description": "Server component for vConsole Remote debugging tool",
+  "main": "main.go",
+  "scripts": {
+    "build": "go build -o vconsole-remote .",
+    "run": "go run .",
+    "dev": "go run ."
+  },
+  "keywords": [
+    "vconsole",
+    "debugging",
+    "remote",
+    "mobile",
+    "web",
+    "devtools",
+    "golang"
+  ],
+  "author": "Developer",
+  "license": "MIT",
+  "dependencies": {
+    "go": "^1.21"
+  },
+  "devDependencies": {
+    "go": "^1.21"
+  }
+}
