@@ -12,3 +12,32 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
+
+      # Behind Cloudflare (or any proxy you control), turn this on so the rate
+      # limiter sees real client addresses instead of the proxy's.
+      - TRUST_PROXY=true
+
+      # Pin the dashboard origin in production.
+      - ALLOWED_ORIGINS=https://debug.leavchandara.com
+
+      # The device owner must approve every incoming debug session.
+      - REQUIRE_DEVICE_APPROVAL=true
+      - AUTH_APPROVAL_TIMEOUT=60s
+
+      # Brute-force budget per client IP.
+      - PIN_ATTEMPT_LIMIT=5
+      - PIN_ATTEMPT_WINDOW=1m
+      - PIN_BLOCK_DURATION=10m
+
+      # Session lifecycle: full workday cap, half-hour idle cutoff.
+      - ROOM_MAX_DURATION=8h
+      - ROOM_IDLE_TIMEOUT=30m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    # Nothing is persisted: no volumes, no database, no writable state.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
