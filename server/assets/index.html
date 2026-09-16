@@ -462,7 +462,7 @@
             const [fetchingNetworkBody, setFetchingNetworkBody] = useState(false);
 
             // Storage Data
-            const [storageData, setStorageData] = useState({ localStorage: {}, sessionStorage: {}, cookies: '' });
+            const [storageData, setStorageData] = useState({ localStorage: [], sessionStorage: [], cookies: [] });
             const [selectedStorageType, setSelectedStorageType] = useState('localStorage');
             const [storageSearchQuery, setStorageSearchQuery] = useState('');
             const [fetchingStorage, setFetchingStorage] = useState(false);
@@ -622,6 +622,56 @@
                 return false;
             };
 
+            /**
+             * Flatten one storage bucket into [{ key, value }].
+             *
+             * The same field arrives in three different shapes depending on the
+             * client and the field: `storage.*` carries arrays of {key, value},
+             * `data.*` carries object maps, and cookies can arrive as a raw
+             * `document.cookie` string. This panel renders whatever a device
+             * sends it, so an unexpected shape must degrade to an empty list
+             * rather than throw — a render-time exception here unmounts the
+             * whole dashboard, not just this tab.
+             */
+            const normalizeStorageEntries = (input) => {
+                const toText = (value) => {
+                    if (typeof value === 'string') return value;
+                    if (value === null || value === undefined) return '';
+                    try {
+                        return JSON.stringify(value);
+                    } catch (_) {
+                        return String(value);
+                    }
+                };
+
+                if (!input) return [];
+
+                // Raw cookie header: "a=1; b=2"
+                if (typeof input === 'string') {
+                    return input.split(';').map((pair, idx) => {
+                        const eq = pair.indexOf('=');
+                        const key = (eq > -1 ? pair.slice(0, eq) : pair).trim();
+                        const value = eq > -1 ? pair.slice(eq + 1).trim() : '';
+                        return { key: key || `cookie_${idx}`, value };
+                    }).filter(item => item.key);
+                }
+
+                if (Array.isArray(input)) {
+                    return input.map((entry, idx) => {
+                        if (entry && typeof entry === 'object') {
+                            return { key: toText(entry.key) || `item_${idx}`, value: toText(entry.value) };
+                        }
+                        return { key: `item_${idx}`, value: toText(entry) };
+                    });
+                }
+
+                if (typeof input === 'object') {
+                    return Object.keys(input).map(key => ({ key, value: toText(input[key]) }));
+                }
+
+                return [];
+            };
+
             const handleIncomingMessage = (msg) => {
                 if (!msg || !msg.type) return;
 
@@ -722,17 +772,19 @@
                             }));
                         }
                         break;
-                    case 'storage_data':
+                    case 'storage_data': {
                         setFetchingStorage(false);
-                        if (msg.storage) {
+                        const source = msg.storage || msg.data;
+                        if (source) {
                             setStorageData({
-                                localStorage: msg.storage.localStorage || {},
-                                sessionStorage: msg.storage.sessionStorage || {},
-                                cookies: msg.storage.cookies || ''
+                                localStorage: normalizeStorageEntries(source.localStorage),
+                                sessionStorage: normalizeStorageEntries(source.sessionStorage),
+                                cookies: normalizeStorageEntries(source.cookies)
                             });
                             antMessage.success('Storage state synchronized.');
                         }
                         break;
+                    }
                     case 'dom_tree_data':
                         setFetchingDomTree(false);
                         if (msg.tree) {
@@ -843,30 +895,13 @@
             }, [networkRequests, networkSearchQuery]);
 
             const storageItems = useMemo(() => {
-                if (selectedStorageType === 'cookies') {
-                    const cookieStr = storageData.cookies || '';
-                    if (!cookieStr) return [];
-                    return cookieStr.split(';').map((pair, idx) => {
-                        const parts = pair.split('=');
-                        const key = (parts[0] || '').trim();
-                        const value = parts.slice(1).join('=').trim();
-                        return { key: key || `cookie_${idx}`, value };
-                    }).filter(item => {
-                        if (!storageSearchQuery) return true;
-                        return item.key.toLowerCase().includes(storageSearchQuery.toLowerCase()) ||
-                               item.value.toLowerCase().includes(storageSearchQuery.toLowerCase());
-                    });
-                }
-
-                const dict = storageData[selectedStorageType] || {};
-                return Object.entries(dict).map(([key, value]) => ({
-                    key,
-                    value: typeof value === 'string' ? value : JSON.stringify(value)
-                })).filter(item => {
-                    if (!storageSearchQuery) return true;
-                    return item.key.toLowerCase().includes(storageSearchQuery.toLowerCase()) ||
-                           item.value.toLowerCase().includes(storageSearchQuery.toLowerCase());
-                });
+                const entries = storageData[selectedStorageType] || [];
+                if (!storageSearchQuery) return entries;
+                const query = storageSearchQuery.toLowerCase();
+                return entries.filter(item =>
+                    item.key.toLowerCase().includes(query) ||
+                    item.value.toLowerCase().includes(query)
+                );
             }, [storageData, selectedStorageType, storageSearchQuery]);
 
             const handlePinChange = (e) => {
