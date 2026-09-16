@@ -246,7 +246,7 @@ async function runTests() {
   // Test 2: URL parsing
   test('URL parsing (_parseServerUrls)', () => {
     const instance = new VConsoleRemote({ autoConnect: false });
-    
+
     const res1 = instance._parseServerUrls('http://192.168.1.50:8080');
     assert.strictEqual(res1.serverOrigin, 'http://192.168.1.50:8080');
     assert.strictEqual(res1.wsUrl, 'ws://192.168.1.50:8080/ws?type=device');
@@ -731,6 +731,36 @@ async function runTests() {
       'https://debug.example.com/#/room/482910?key=a8f9c73b9ea1b2c3',
       `QR URL must carry the PIN and key, got ${pairingUrl}`
     );
+
+    instance.destroy();
+  });
+
+  // Test 11k: Fast-path body masking and safe non-backtracking form handling
+  test('Fast-path leaves non-sensitive bodies untouched and parses forms without catastrophic backtracking', () => {
+    const instance = new VConsoleRemote({ autoConnect: false });
+
+    // Non-sensitive payload returns identical string without deep traversal overhead
+    const benignJson = JSON.stringify({ items: [1, 2, 3], status: 'ok', data: { name: 'product' } });
+    const result1 = instance._maskBody(benignJson);
+    assert.strictEqual(result1, benignJson, 'Benign body without sensitive keys must return unchanged');
+
+    // Sensitive payload is correctly redacted
+    const sensitiveJson = JSON.stringify({ user: 'bob', password: 'my-password-123' });
+    const result2 = instance._maskBody(sensitiveJson);
+    assert.ok(result2.includes('********'));
+    assert.ok(!result2.includes('my-password-123'));
+
+    // Safe linear form parsing with sensitive key
+    const formWithSecret = 'field1=val1&secret=supersecret&field2=val2';
+    const maskedForm = instance._maskBody(formWithSecret);
+    assert.strictEqual(maskedForm, 'field1=val1&secret=********&field2=val2');
+
+    // Potentially adversarial non-matching query string does not hang
+    const nonMatching = 'a='.repeat(500) + 'invalid string with spaces and symbols';
+    const start = Date.now();
+    const safeOutput = instance._maskBody(nonMatching);
+    assert.ok(Date.now() - start < 50, 'Must not stall on adversarial strings');
+    assert.strictEqual(safeOutput, nonMatching);
 
     instance.destroy();
   });
