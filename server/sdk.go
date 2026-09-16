@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 )
@@ -54,9 +55,32 @@ func registerSDKRoute(e *echo.Echo) {
 		// broker. The ETag makes the revalidation cheap.
 		h.Set("Cache-Control", "public, max-age=3600")
 
-		if c.Request().Header.Get("If-None-Match") == sdkETag {
+		if etagMatches(c.Request().Header.Get("If-None-Match"), sdkETag) {
 			return c.NoContent(http.StatusNotModified)
 		}
 		return c.Blob(http.StatusOK, "application/javascript; charset=utf-8", sdkBundle)
 	})
+}
+
+// etagMatches reports whether an If-None-Match header selects the given tag.
+//
+// RFC 9110 requires the *weak* comparison here, which matters in practice:
+// an edge proxy that recompresses a response (Cloudflare does) hands the
+// client back `W/"abc"` for what the origin sent as `"abc"`. Comparing the raw
+// strings would then miss on every revalidation and re-send the whole bundle.
+// The header may also carry a list, or `*`.
+func etagMatches(header, tag string) bool {
+	if header == "" {
+		return false
+	}
+	if strings.TrimSpace(header) == "*" {
+		return true
+	}
+	tag = strings.TrimPrefix(tag, "W/")
+	for _, candidate := range strings.Split(header, ",") {
+		if strings.TrimPrefix(strings.TrimSpace(candidate), "W/") == tag {
+			return true
+		}
+	}
+	return false
 }
