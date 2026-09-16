@@ -1,18 +1,120 @@
 name: Release
 
-# Publishes the client SDK to npm and attaches server binaries to the GitHub
-# release. Triggered by pushing a tag like v1.0.0.
+# Publishes the client SDK to npm — which is what makes `npm install
+# vconsole-remote` work and what jsDelivr and unpkg serve from — and attaches
+# the server binaries to the GitHub release.
+#
+# Two ways in:
+#   - push a tag:  git tag v1.0.0 && git push origin v1.0.0
+#   - Actions -> Release -> Run workflow, which tags the current branch for you
+#
+# The broker's own /sdk.js route does NOT depend on any of this; it ships with
+# every deploy. This workflow is only about the npm and CDN paths.
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 1.0.0 (must equal packages/vconsole-remote/package.json)"
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+# npm versions are immutable, so never let two releases run at once.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Fail in seconds rather than after the full test suite, where a missing
+      # token surfaces as an opaque ENEEDAUTH from `npm publish`.
+      - name: NPM_TOKEN must be configured
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::NPM_TOKEN is not set. Add it under Settings -> Secrets and variables -> Actions as an npm Automation token with publish rights, then re-run this workflow."
+            exit 1
+          fi
+          echo "NPM_TOKEN is present."
+
+      - name: Resolve and validate the version
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          pkg=$(node -p "require('./packages/vconsole-remote/package.json').version")
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            want="${INPUT_VERSION#v}"
+            if [ "$want" != "$pkg" ]; then
+              echo "::error::Asked to publish $want but packages/vconsole-remote/package.json says $pkg. Bump the version there, commit, then run this again."
+              exit 1
+            fi
+            tag="v$pkg"
+          else
+            tag="$GITHUB_REF_NAME"
+            if [ "${tag#v}" != "$pkg" ]; then
+              echo "::error::Tag $tag does not match package.json version $pkg. Bump the version, commit, then retag."
+              exit 1
+            fi
+          fi
+
+          echo "Releasing $tag (package version $pkg)"
+          echo "version=$pkg" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # A published npm version can never be replaced, so catch the collision
+      # before the pipeline spends ten minutes earning a 403.
+      - name: Version must not already be published
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          version="$VERSION"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/vconsole-remote/$version" || echo 000)
+          if [ "$code" = "200" ]; then
+            echo "::error::vconsole-remote@$version is already on npm. Published versions are immutable — bump the version and release again."
+            exit 1
+          fi
+          echo "vconsole-remote@$version is not yet published (registry says $code)."
+
+      - name: Create the tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          tag="$TAG"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "$tag already exists; reusing it."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+            echo "Created and pushed $tag."
+          fi
+
   verify:
     name: Verify Before Publishing
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,16 +140,19 @@ jobs:
           npm run build
           npm test
 
-      - name: Tag must match the SDK version
+      - name: Package contents must be publishable
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          pkg=$(node -p "require('./packages/vconsole-remote/package.json').version")
-          if [ "$tag" != "$pkg" ]; then
-            echo "Tag v$tag does not match package.json version $pkg."
-            echo "Bump the version, commit, then retag."
-            exit 1
-          fi
-          echo "Tag and package version agree: $pkg"
+          cd packages/vconsole-remote
+          npm pack --dry-run
+          # The three bundles are the whole point of the package; a rollup
+          # config regression that drops one would otherwise publish silently.
+          for f in dist/vconsole-remote.js dist/vconsole-remote.min.js dist/vconsole-remote.esm.js; do
+            [ -s "$f" ] || { echo "::error::$f is missing or empty"; exit 1; }
+          done
+          grep -q 'VConsoleRemote' dist/vconsole-remote.min.js \
+            || { echo "::error::minified bundle does not expose VConsoleRemote"; exit 1; }
+          node --check dist/vconsole-remote.min.js
+          echo "All three bundles present and valid."
 
       - name: E2E suite
         run: |
@@ -56,7 +161,7 @@ jobs:
 
   publish-npm:
     name: Publish SDK to npm
-    needs: verify
+    needs: [preflight, verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -87,17 +192,10 @@ jobs:
 
   release-binaries:
     name: Attach Server Binaries
-    needs: verify
+    needs: [preflight, verify]
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: arm64
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -106,15 +204,118 @@ jobs:
           go-version: "1.26"
           cache-dependency-path: server/go.sum
 
-      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: packages/vconsole-remote/package-lock.json
+
+      # Without this the released binaries answer 503 on /sdk.js, so anyone
+      # self-hosting from a release download would get a broker that cannot
+      # serve the SDK it is supposed to ship with.
+      - name: Stage the client SDK for embedding
+        run: ./scripts/build-sdk.sh
+
+      - name: Build binaries
         run: |
           cd server
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -trimpath -ldflags="-s -w" \
-            -o vconsole-remote-${{ matrix.goos }}-${{ matrix.goarch }} .
+          for target in linux/amd64 linux/arm64 darwin/arm64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "vconsole-remote-$goos-$goarch" .
+            echo "built vconsole-remote-$goos-$goarch"
+          done
 
+      # One upload for all three. Running this per-matrix-leg raced three
+      # concurrent writes against the same release.
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
-          files: server/vconsole-remote-${{ matrix.goos }}-${{ matrix.goarch }}
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          files: server/vconsole-remote-*
           generate_release_notes: true
+
+  verify-distribution:
+    name: Verify npm + CDN
+    needs: [preflight, publish-npm]
+    runs-on: ubuntu-latest
+    steps:
+      # Everything below runs AFTER an immutable publish. A failure here means
+      # "published, but not yet being served" — it is a signal to investigate,
+      # never a reason to re-publish.
+      - name: npm registry serves the new version
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          version="$VERSION"
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/vconsole-remote/$version" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "npm serves vconsole-remote@$version"
+              exit 0
+            fi
+            echo "  attempt $i: registry says $code, waiting..."
+            sleep 10
+          done
+          echo "::error::npm did not serve vconsole-remote@$version within 5 minutes."
+          exit 1
+
+      # jsDelivr caches the @latest alias; nudge it so the unpinned URL in the
+      # docs does not keep serving the previous release.
+      - name: Purge the jsDelivr latest alias
+        continue-on-error: true
+        run: |
+          curl -sS -m 30 "https://purge.jsdelivr.net/npm/vconsole-remote@latest/dist/vconsole-remote.min.js" || true
+
+      - name: CDNs serve the bundle
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          version="$VERSION"
+          fail=0
+
+          check_cdn() {
+            local name="$1" url="$2"
+            for i in $(seq 1 30); do
+              code=$(curl -sL -o cdn.js -m 30 -w '%{http_code}' "$url" || echo 000)
+              if [ "$code" = "200" ] && [ "$(wc -c < cdn.js)" -gt 100000 ]; then
+                if ! grep -q 'VConsoleRemote' cdn.js; then
+                  echo "::error::$name served a bundle without the VConsoleRemote global"
+                  fail=1
+                  return
+                fi
+                node --check cdn.js || { echo "::error::$name served invalid JavaScript"; fail=1; return; }
+                echo "$name OK ($(wc -c < cdn.js) bytes)"
+                return
+              fi
+              echo "  $name attempt $i: status $code, waiting..."
+              sleep 10
+            done
+            echo "::error::$name did not serve vconsole-remote@$version within 5 minutes. The npm publish itself succeeded — this is a CDN propagation problem, do not re-publish."
+            fail=1
+          }
+
+          check_cdn "jsDelivr" "https://cdn.jsdelivr.net/npm/vconsole-remote@$version/dist/vconsole-remote.min.js"
+          check_cdn "unpkg"    "https://unpkg.com/vconsole-remote@$version/dist/vconsole-remote.min.js"
+
+          exit "$fail"
+
+      - name: Summary
+        if: success()
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          version="$VERSION"
+          {
+            echo "### vconsole-remote@$version is live"
+            echo
+            echo '```bash'
+            echo "npm install vconsole-remote@$version"
+            echo '```'
+            echo
+            echo '```html'
+            echo "<script src=\"https://cdn.jsdelivr.net/npm/vconsole-remote@$version/dist/vconsole-remote.min.js\"></script>"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

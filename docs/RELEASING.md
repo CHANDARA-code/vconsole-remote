@@ -1,7 +1,15 @@
 # Releasing
 
 The server and the client SDK share a version number and ship together.
-Releases are cut by pushing a tag; CI does the publishing.
+CI does the publishing — you never run `npm publish` by hand.
+
+Releasing affects two of the three ways people load the SDK:
+
+| Path | Released by |
+| --- | --- |
+| `https://<broker>/sdk.js` | every deploy to `main` — **not** this workflow |
+| `npm install vconsole-remote` | this workflow |
+| jsDelivr / unpkg | this workflow, indirectly (both serve from npm) |
 
 ## One-time setup
 
@@ -44,28 +52,61 @@ Before the first release, these must exist:
    npm run test:all
    ```
 
-4. **Commit and tag.**
+4. **Commit, then release one of two ways.**
+
+   Commit the bump first either way:
 
    ```bash
    git commit -am "chore(release): v1.0.1"
-   git tag v1.0.1
-   git push origin main --follow-tags
+   git push origin main
    ```
 
-5. **Watch the Release workflow.** It verifies tests and the tag/version match,
-   publishes the SDK to npm with provenance, and attaches server binaries for
-   linux/amd64, linux/arm64 and darwin/arm64 to the GitHub release.
+   **From the Actions tab** (no local tagging): Actions → Release → Run
+   workflow → type `1.0.1`. The workflow creates and pushes the tag for you
+   once its preflight checks pass.
+
+   **Or by tag:**
+
+   ```bash
+   git tag v1.0.1
+   git push origin v1.0.1
+   ```
+
+5. **Watch the Release workflow.** It runs in this order, and stops at the
+   first thing that is wrong:
+
+   - **Preflight** — `NPM_TOKEN` exists, the version matches
+     `package.json`, and that version is not already on npm. These are all
+     seconds-long checks placed ahead of the test suite on purpose: a missing
+     token used to surface as an opaque `ENEEDAUTH` ten minutes in, and npm
+     versions are immutable so a duplicate can never be fixed by retrying.
+   - **Verify** — server tests, SDK build and tests, `npm pack --dry-run`, a
+     check that all three bundles exist and that the minified one parses and
+     exposes `VConsoleRemote`, then the 4-tier E2E suite.
+   - **Publish** — `npm publish --provenance`.
+   - **Attach binaries** — linux/amd64, linux/arm64, darwin/arm64, built with
+     the SDK embedded so a downloaded binary serves `/sdk.js` correctly.
+   - **Verify npm + CDN** — polls the registry, purges jsDelivr's `@latest`
+     alias, then confirms jsDelivr and unpkg actually serve the new bundle.
 
 ## After publishing
 
+The **Verify npm + CDN** job already checks the first two of these and writes
+the install snippets into the run summary, so there is normally nothing to do
+by hand:
+
 - **npm** — `npm view vconsole-remote version` should show the new version
   within a minute.
-- **CDN** — jsDelivr serves from npm and caches aggressively. The versioned URL
-  (`.../vconsole-remote@1.0.1/dist/vconsole-remote.js`) is available
-  immediately; the unversioned one may lag up to 12 hours. Link a versioned URL
-  in documentation and announcements.
+- **CDN** — jsDelivr and unpkg both serve from npm. The versioned URL
+  (`.../vconsole-remote@1.0.1/dist/vconsole-remote.min.js`) appears within
+  minutes; the *unversioned* one can lag up to 12 hours even after the purge
+  the workflow issues. Always link a versioned URL in docs and announcements.
 - **Docker** — the `docker` CI job builds the image on every push but does not
   publish it. Add a registry push step here if you decide to distribute images.
+
+If **Verify npm + CDN** fails, the publish itself still succeeded and is
+immutable — do not try to republish. It means the package is on npm but a CDN
+has not picked it up yet, which resolves on its own; re-run that job to confirm.
 
 ## Versioning
 

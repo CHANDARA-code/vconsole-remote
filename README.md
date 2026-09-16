@@ -267,6 +267,19 @@ real client address instead of blocking every user behind the proxy at once. Tur
 it on **only** when a proxy you control is genuinely in front: with it on and
 nothing in front, anyone can forge `X-Forwarded-For` and walk past the limiter.
 
+#### Release automation (npm + CDN)
+
+[`release.yml`](.github/workflows/release.yml) owns the npm and CDN paths.
+Trigger it from **Actions → Release → Run workflow** with a version, or by
+pushing a `v*.*.*` tag. It preflights the credential and the version (npm
+versions are immutable, so a duplicate is caught before anything runs),
+verifies the bundles, publishes with provenance, attaches server binaries built
+*with the SDK embedded*, then confirms npm, jsDelivr and unpkg actually serve
+the result. [`docs/RELEASING.md`](docs/RELEASING.md) has the full sequence.
+
+The `/sdk.js` path is deliberately not part of this: it ships with every deploy
+to `main`, so it is never waiting on a release.
+
 #### Continuous deployment
 
 [`.github/workflows/deploy-vps.yml`](.github/workflows/deploy-vps.yml) redeploys
