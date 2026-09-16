@@ -102,14 +102,23 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           tag="$TAG"
-          if git rev-parse "$tag" >/dev/null 2>&1; then
-            echo "$tag already exists; reusing it."
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            # A tag left behind by an earlier run that failed verification
+            # still points at that older commit. Reusing it blindly would
+            # publish THIS commit to npm while the tag and the GitHub release
+            # claim the previous one.
+            existing=$(git rev-list -n 1 "$tag")
+            if [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $tag already exists at $existing but this run is on $GITHUB_SHA. Delete the stale tag (git push --delete origin $tag) or bump the version, then run again."
+              exit 1
+            fi
+            echo "$tag already exists at this commit; reusing it."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "$tag" -m "Release $tag"
             git push origin "$tag"
-            echo "Created and pushed $tag."
+            echo "Created and pushed $tag at $GITHUB_SHA."
           fi
 
   verify:
