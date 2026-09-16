@@ -1,6 +1,6 @@
 {
   "name": "vconsole-remote",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Lightweight remote debugging tool built on top of vConsole",
   "main": "dist/vconsole-remote.js",
   "module": "dist/vconsole-remote.esm.js",
