@@ -129,6 +129,9 @@ func registerRoutes(e *echo.Echo) {
 		e.GET("/assets/*", echo.WrapHandler(http.StripPrefix("/assets/", http.FileServer(http.FS(assetSubFS)))))
 	}
 
+	// Client SDK, served from the same origin as the broker it talks to
+	registerSDKRoute(e)
+
 	// WebSocket handler for mobile devices and developer browser
 	e.GET("/ws", wsHandler)
 }

@@ -147,16 +147,41 @@ jobs:
       - name: Smoke Test The Image
         run: |
           docker run -d --name vcr -p 8080:8080 vconsole-remote:ci
+          healthy=0
           for i in $(seq 1 20); do
             if curl -sf http://127.0.0.1:8080/healthz > /dev/null; then
               echo "Server is healthy:"
               curl -s http://127.0.0.1:8080/healthz
-              docker rm -f vcr
-              exit 0
+              healthy=1
+              break
             fi
             sleep 1
           done
-          echo "Server did not become healthy in time. Logs:"
-          docker logs vcr
+          if [ "$healthy" != "1" ]; then
+            echo "Server did not become healthy in time. Logs:"
+            docker logs vcr
+            docker rm -f vcr
+            exit 1
+          fi
+
+          # The image must carry the client SDK, or every page loading
+          # /sdk.js from this broker breaks. The route answers 503 with valid
+          # JavaScript when the bundle is missing, so assert on the status.
+          echo "Checking /sdk.js is embedded and served:"
+          code=$(curl -s -o sdk.js -w '%{http_code}' http://127.0.0.1:8080/sdk.js)
+          size=$(wc -c < sdk.js)
+          echo "  status=$code size=$size"
+          if [ "$code" != "200" ] || [ "$size" -lt 100000 ]; then
+            echo "/sdk.js did not serve the bundle (status=$code size=$size)"
+            head -c 300 sdk.js
+            docker rm -f vcr
+            exit 1
+          fi
+          if ! grep -q 'VConsoleRemote' sdk.js; then
+            echo "/sdk.js does not expose the VConsoleRemote global"
+            docker rm -f vcr
+            exit 1
+          fi
+          node --check sdk.js && echo "  bundle parses as valid JavaScript"
+
           docker rm -f vcr
-          exit 1

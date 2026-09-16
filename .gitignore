@@ -7,6 +7,9 @@ node_modules/
 dist/
 build/
 server/vconsole-remote
+# Staged from packages/vconsole-remote/dist by scripts/build-sdk.sh so the Go
+# build can embed it; regenerated on every build, never committed.
+server/assets/sdk.js
 *.exe
 *.exe~
 *.dll
