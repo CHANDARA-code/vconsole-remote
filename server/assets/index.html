@@ -509,7 +509,7 @@
                         // The QR code appends the room secret as ?key=<hex>
                         const keyMatch = hash.match(/[?&]key=([A-Za-z0-9_-]+)/);
                         const key = keyMatch ? keyMatch[1] : '';
-                        setPinInputValue(`${pin.slice(0, 3)}-${pin.slice(3)}`);
+                        setPinInputValue(pin);
                         if (tab && ['console', 'network', 'storage', 'dom', 'screenshot', 'repl'].includes(tab)) {
                             setActiveTab(tab);
                         }
@@ -675,7 +675,7 @@
                         setConnectionStatus('connected');
                         setAuthNotice(null);
                         setDeviceConnected(true);
-                        antMessage.success(`Connected to Room ${(msg.pin || '').slice(0, 3)}-${(msg.pin || '').slice(3)}`);
+                        antMessage.success(`Connected to Room ${msg.pin || ''}`);
                         break;
                     case 'device_connected':
                         setDeviceConnected(true);
@@ -870,12 +870,7 @@
             }, [storageData, selectedStorageType, storageSearchQuery]);
 
             const handlePinChange = (e) => {
-                const clean = e.target.value.replace(/\D/g, '').slice(0, 6);
-                if (clean.length > 3) {
-                    setPinInputValue(`${clean.slice(0, 3)}-${clean.slice(3)}`);
-                } else {
-                    setPinInputValue(clean);
-                }
+                setPinInputValue(e.target.value.replace(/\D/g, '').slice(0, 6));
             };
 
             const copyRoomLink = () => {
@@ -998,7 +993,7 @@
                                 }}>
                                     <span className={deviceConnected ? "status-dot-active" : "status-dot-waiting"}></span>
                                     <Text strong style={{ fontFamily: 'var(--font-family-mono)', fontSize: 13, color: token.colorText, whiteSpace: 'nowrap' }}>
-                                        {isMobile ? '' : 'ROOM: '}{roomPin ? `${roomPin.slice(0, 3)}-${roomPin.slice(3)}` : '------'}
+                                        {isMobile ? '' : 'ROOM: '}{roomPin || '------'}
                                     </Text>
                                     <Tooltip title="Copy Room Link">
                                         <Button
@@ -1171,11 +1166,11 @@
                                                             />
                                                         ) : (
                                                             <Input
-                                                                placeholder="000-000"
+                                                                placeholder="000000"
                                                                 value={pinInputValue}
                                                                 onChange={handlePinChange}
                                                                 onKeyDown={(e) => e.key === 'Enter' && connectToRoom()}
-                                                                maxLength={7}
+                                                                maxLength={6}
                                                                 style={{
                                                                     textAlign: 'center',
                                                                     fontSize: 28,

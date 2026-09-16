@@ -1063,11 +1063,7 @@ class VConsoleRemote {
 
   _formatPin(pin) {
     if (!pin) return '';
-    const str = String(pin).replace(/\D/g, '');
-    if (str.length === 6) {
-      return `${str.slice(0, 3)}-${str.slice(3)}`;
-    }
-    return str;
+    return String(pin).replace(/\D/g, '');
   }
 
   /**
