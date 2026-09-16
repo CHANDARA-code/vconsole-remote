@@ -22,6 +22,15 @@ const BrandColors = {
   overlay: 'rgba(31, 30, 28, 0.72)',
 };
 
+// Bodies above this size are recorded as a summary rather than in full. The
+// SDK runs on real devices and forwards over a phone's uplink, so capturing a
+// multi-megabyte upload verbatim costs the user memory and bandwidth for data
+// nobody reads in a log panel.
+const DEFAULT_MAX_BODY_BYTES = 128 * 1024;
+
+// Content types whose bodies are meaningless as text.
+const BINARY_CONTENT_TYPE = /^(image|video|audio|font)\/|^application\/(octet-stream|pdf|zip|gzip|x-gzip|wasm|x-protobuf|vnd\.android\.package-archive)/i;
+
 const REDACTED_HEADER = '[REDACTED]';
 const REDACTED_VALUE = '********';
 
@@ -68,6 +77,12 @@ class VConsoleRemote {
     };
 
     this.security = this._normalizeSecurityOptions(options.security);
+
+    // Upper bound on how much of any single request or response body is kept
+    const requestedMax = Number(options.maxBodyBytes);
+    this.maxBodyBytes = Number.isFinite(requestedMax) && requestedMax >= 0
+      ? requestedMax
+      : DEFAULT_MAX_BODY_BYTES;
 
     const { serverOrigin, wsUrl } = this._parseServerUrls(this.options.server);
     this.serverOrigin = serverOrigin;
@@ -124,6 +139,148 @@ class VConsoleRemote {
       sensitiveBodyKeys: toLowerList(input.sensitiveBodyKeys, DEFAULT_SENSITIVE_BODY_KEYS),
       allowRemoteEval: input.allowRemoteEval === true
     };
+  }
+
+  _formatBytes(bytes) {
+    const size = Number(bytes);
+    if (!Number.isFinite(size) || size < 0) return 'unknown size';
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  /**
+   * Apply the capture limit to a textual body, replacing an oversized data URI
+   * with a summary and truncating anything else that runs past the cap.
+   */
+  _captureText(text) {
+    if (typeof text !== 'string' || text === '') return text;
+
+    const limit = this.maxBodyBytes;
+    if (limit <= 0 || text.length <= limit) return text;
+
+    const dataUri = /^data:([^;,]*)[^,]*,/.exec(text);
+    if (dataUri) {
+      return `[data URI: ${dataUri[1] || 'unknown type'}, ${this._formatBytes(text.length)}]`;
+    }
+
+    return `${text.slice(0, limit)}\n… [truncated: ${this._formatBytes(text.length)} total, showing the first ${this._formatBytes(limit)}]`;
+  }
+
+  /**
+   * Turn a request body into something readable.
+   *
+   * fetch and XHR accept FormData, Blob, File, ArrayBuffer, typed arrays,
+   * URLSearchParams and streams. JSON.stringify renders most of those as "{}"
+   * and expands a typed array into one JSON entry per byte, so each shape is
+   * described explicitly instead.
+   */
+  _describeRequestBody(body) {
+    if (body === null || body === undefined) return null;
+    if (typeof body === 'string') return this._captureText(body);
+
+    // Resolve constructors from window in a browser and globalThis elsewhere,
+    // so the describers behave the same under test as they do on a device.
+    const isType = (name) => {
+      const ctor = (typeof window !== 'undefined' && window[name])
+        || (typeof globalThis !== 'undefined' && globalThis[name]);
+      return typeof ctor === 'function' && body instanceof ctor;
+    };
+
+    try {
+      if (isType('URLSearchParams')) return this._captureText(body.toString());
+      if (isType('FormData')) return this._describeFormData(body);
+
+      // File extends Blob, so it has to be checked first
+      if (isType('File')) {
+        return `[File: ${body.name || 'unnamed'}, ${body.type || 'unknown type'}, ${this._formatBytes(body.size)}]`;
+      }
+      if (isType('Blob')) {
+        return `[Blob: ${body.type || 'unknown type'}, ${this._formatBytes(body.size)}]`;
+      }
+      if (isType('ArrayBuffer')) {
+        return `[ArrayBuffer: ${this._formatBytes(body.byteLength)}]`;
+      }
+      if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(body)) {
+        const name = (body.constructor && body.constructor.name) || 'TypedArray';
+        return `[${name}: ${this._formatBytes(body.byteLength)}]`;
+      }
+      if (isType('ReadableStream')) {
+        // Reading it here would consume the upload before it is sent
+        return '[ReadableStream: not captured]';
+      }
+      if (isType('Document')) return '[Document]';
+    } catch (_) {
+      return '[Body: could not be inspected]';
+    }
+
+    try {
+      return this._captureText(JSON.stringify(body));
+    } catch (_) {
+      return '[Body: not serializable]';
+    }
+  }
+
+  /**
+   * Describe a multipart upload: text fields inline (masked where they name a
+   * credential), files as name, type and size rather than their contents.
+   */
+  _describeFormData(formData) {
+    const lines = [];
+    let fileCount = 0;
+    let fileBytes = 0;
+
+    try {
+      const entries = typeof formData.entries === 'function' ? formData.entries() : [];
+      for (const [name, value] of entries) {
+        if (value && typeof value === 'object' && typeof value.size === 'number') {
+          fileCount += 1;
+          fileBytes += value.size;
+          const filename = value.name || 'unnamed';
+          lines.push(`${name}: [file ${filename}, ${value.type || 'unknown type'}, ${this._formatBytes(value.size)}]`);
+        } else {
+          const masked = this.security.maskSensitiveData && this._isSensitiveKey(name)
+            ? REDACTED_VALUE
+            : String(value);
+          lines.push(`${name}: ${masked}`);
+        }
+      }
+    } catch (_) {
+      return '[FormData: could not be read]';
+    }
+
+    if (!lines.length) return '[FormData: empty]';
+
+    const summary = fileCount
+      ? ` (${fileCount} file${fileCount === 1 ? '' : 's'}, ${this._formatBytes(fileBytes)})`
+      : '';
+    return this._captureText(`FormData${summary}\n${lines.join('\n')}`);
+  }
+
+  /**
+   * Decide whether a response body is worth materialising. Returns a summary
+   * string to store instead, or null to read the body normally.
+   */
+  _summarizeResponseBody(headers) {
+    const lookup = (name) => {
+      if (!headers) return '';
+      const hit = Object.keys(headers).find(k => k.toLowerCase() === name);
+      return hit ? String(headers[hit]) : '';
+    };
+
+    const contentType = lookup('content-type');
+    const declaredLength = parseInt(lookup('content-length'), 10);
+
+    if (contentType && BINARY_CONTENT_TYPE.test(contentType)) {
+      const size = Number.isFinite(declaredLength) ? `, ${this._formatBytes(declaredLength)}` : '';
+      return `[Binary response: ${contentType.split(';')[0]}${size}]`;
+    }
+
+    if (this.maxBodyBytes > 0 && Number.isFinite(declaredLength) && declaredLength > this.maxBodyBytes) {
+      return `[Response not captured: ${this._formatBytes(declaredLength)} exceeds the ${this._formatBytes(this.maxBodyBytes)} capture limit]`;
+    }
+
+    return null;
   }
 
   _isSensitiveHeader(name) {
@@ -467,12 +624,11 @@ class VConsoleRemote {
       }
 
       if (init.method) method = init.method.toUpperCase();
-      if (init.body) {
-        try {
-          requestBody = typeof init.body === 'string' ? init.body : JSON.stringify(init.body);
-        } catch (_) {
-          requestBody = '[Body]';
-        }
+      if (init.body !== undefined && init.body !== null) {
+        requestBody = this._describeRequestBody(init.body);
+      } else if (input && typeof input === 'object' && input.body) {
+        // Request object carrying a body stream
+        requestBody = this._describeRequestBody(input.body);
       }
       if (init.headers) {
         try {
@@ -497,20 +653,43 @@ class VConsoleRemote {
           }
         } catch (_) {}
 
+        const baseRecord = {
+          id: requestId,
+          method,
+          url,
+          status,
+          duration,
+          requestHeaders,
+          responseHeaders,
+          requestBody,
+          timestamp: startTime
+        };
+
+        // Binary or oversized payloads are summarized from the headers alone,
+        // so the body is never pulled into memory on the device.
+        const skipReason = this._summarizeResponseBody(responseHeaders);
+        if (skipReason) {
+          this._storeNetworkRequest(requestId, { ...baseRecord, responseBody: skipReason });
+          this._send({
+            type: 'network',
+            request: {
+              id: requestId,
+              method,
+              url: this._maskUrl(url),
+              status,
+              duration,
+              timestamp: startTime
+            }
+          });
+          return response;
+        }
+
         try {
           const clone = response.clone();
           clone.text().then(text => {
             this._storeNetworkRequest(requestId, {
-              id: requestId,
-              method,
-              url,
-              status,
-              duration,
-              requestHeaders,
-              responseHeaders,
-              requestBody,
-              responseBody: text,
-              timestamp: startTime
+              ...baseRecord,
+              responseBody: this._captureText(text)
             });
           }).catch(() => {
             this._storeNetworkRequest(requestId, {
@@ -626,12 +805,8 @@ class VConsoleRemote {
       const startTime = Date.now();
       let requestBody = null;
 
-      if (body) {
-        try {
-          requestBody = typeof body === 'string' ? body : JSON.stringify(body);
-        } catch (_) {
-          requestBody = '[Body]';
-        }
+      if (body !== undefined && body !== null) {
+        requestBody = self._describeRequestBody(body);
       }
 
       const onComplete = () => {
@@ -644,9 +819,13 @@ class VConsoleRemote {
 
         try {
           if (!xhr.responseType || xhr.responseType === 'text') {
-            responseBody = xhr.responseText || '';
+            responseBody = self._captureText(xhr.responseText || '');
           } else if (xhr.responseType === 'json') {
-            responseBody = JSON.stringify(xhr.response);
+            responseBody = self._captureText(JSON.stringify(xhr.response));
+          } else if (xhr.responseType === 'arraybuffer' && xhr.response) {
+            responseBody = `[ArrayBuffer response: ${self._formatBytes(xhr.response.byteLength)}]`;
+          } else if (xhr.responseType === 'blob' && xhr.response) {
+            responseBody = `[Blob response: ${xhr.response.type || 'unknown type'}, ${self._formatBytes(xhr.response.size)}]`;
           } else {
             responseBody = `[Response type: ${xhr.responseType}]`;
           }
@@ -1061,6 +1240,11 @@ class VConsoleRemote {
     return this.roomKey ? `${base}?key=${encodeURIComponent(this.roomKey)}` : base;
   }
 
+  /**
+   * Render a PIN as plain digits. The separator that used to sit in the middle
+   * looked tidier but had to be stripped by hand whenever someone copied the
+   * PIN across to the dashboard.
+   */
   _formatPin(pin) {
     if (!pin) return '';
     return String(pin).replace(/\D/g, '');

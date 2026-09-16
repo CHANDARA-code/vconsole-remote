@@ -127,6 +127,10 @@ const vConsole = new VConsoleRemote({
     // Let the dashboard run JavaScript on this device (default: false)
     allowRemoteEval: false,
   },
+
+  // Cap on how much of any single body is captured (default: 128 KB).
+  // File uploads are described by name, type and size rather than content.
+  maxBodyBytes: 128 * 1024,
 });
 ```
 

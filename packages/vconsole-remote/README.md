@@ -120,6 +120,27 @@ arbitrary JavaScript on the device unless your app opts in.
 - `security.sensitiveHeaders`: Header names to redact — replaces the default list
 - `security.sensitiveBodyKeys`: JSON/form/query keys to redact — replaces the default list
 - `security.allowRemoteEval`: Allow the dashboard to execute JavaScript here (default: `false`)
+- `maxBodyBytes`: Cap on how much of any single request/response body is captured (default: `131072`, i.e. 128 KB). `0` disables the cap.
+
+## File uploads and binary bodies
+
+`fetch` and `XMLHttpRequest` accept more than strings, and `JSON.stringify`
+renders most of those as `{}` — or, for a typed array, one JSON entry per byte.
+Each shape is described instead:
+
+| Body | Captured as |
+| --- | --- |
+| `FormData` | field list; files as `[file name, type, size]`, text fields masked as usual |
+| `File` / `Blob` | `[File: photo.png, image/png, 350.0 KB]` |
+| `ArrayBuffer` / typed array | `[Uint8Array: 1.0 MB]` |
+| `URLSearchParams` | its encoded form, e.g. `a=1&b=2` |
+| `ReadableStream` | `[ReadableStream: not captured]` — reading it would consume the upload |
+| Oversized data URI | `[data URI: image/png, 2.0 MB]` |
+| Anything past `maxBodyBytes` | truncated, with the original size noted |
+
+Responses are handled from their headers: a binary `content-type` or a
+`content-length` past the cap is summarized without the body ever being read
+into memory on the device.
 
 ### Methods
 - `sendLog(level, message)`: Send log data to the server

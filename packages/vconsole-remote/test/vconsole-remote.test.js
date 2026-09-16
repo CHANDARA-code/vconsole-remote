@@ -735,6 +735,122 @@ async function runTests() {
     instance.destroy();
   });
 
+  // Test 12a: Upload bodies are described, not stringified into "{}"
+  test('Request bodies of every upload type are described usefully', () => {
+    const instance = new VConsoleRemote({ autoConnect: false });
+
+    const fd = new FormData();
+    fd.append('caption', 'holiday photo');
+    fd.append('password', 'hunter2');
+    fd.append('file', new File([new Uint8Array(2048)], 'photo.png', { type: 'image/png' }));
+
+    const form = instance._describeRequestBody(fd);
+    assert.ok(form.includes('photo.png'), 'File name must be visible');
+    assert.ok(form.includes('image/png'), 'File type must be visible');
+    assert.ok(form.includes('2.0 KB'), `File size must be visible, got: ${form}`);
+    assert.ok(form.includes('holiday photo'), 'Text fields stay readable');
+    assert.ok(!form.includes('hunter2'), 'Sensitive form fields are still masked');
+    assert.ok(form.includes('1 file'), 'Summary counts the files');
+
+    const blob = instance._describeRequestBody(new Blob([new Uint8Array(1024)], { type: 'image/jpeg' }));
+    assert.ok(/Blob.*image\/jpeg.*1\.0 KB/.test(blob), `Blob described, got: ${blob}`);
+
+    const file = instance._describeRequestBody(new File([new Uint8Array(512)], 'doc.pdf', { type: 'application/pdf' }));
+    assert.ok(file.includes('doc.pdf') && file.includes('512 B'), `File described, got: ${file}`);
+
+    const buf = instance._describeRequestBody(new ArrayBuffer(4096));
+    assert.ok(buf.includes('ArrayBuffer') && buf.includes('4.0 KB'), `ArrayBuffer described, got: ${buf}`);
+
+    const params = instance._describeRequestBody(new URLSearchParams('a=1&b=2'));
+    assert.strictEqual(params, 'a=1&b=2', 'URLSearchParams keeps its encoded form');
+
+    instance.destroy();
+  });
+
+  // Test 12b: a typed array must not be expanded byte-by-byte into JSON
+  test('Typed arrays are summarized rather than expanded per byte', () => {
+    const instance = new VConsoleRemote({ autoConnect: false });
+
+    const megabyte = new Uint8Array(1024 * 1024);
+    const described = instance._describeRequestBody(megabyte);
+
+    assert.ok(described.includes('1.0 MB'), `Size must be reported, got: ${described}`);
+    assert.ok(described.length < 200, `Description must stay small, got ${described.length} chars`);
+    assert.ok(!described.includes('"0":0'), 'Must not serialize individual bytes');
+
+    instance.destroy();
+  });
+
+  // Test 12c: oversized bodies are capped
+  test('Large bodies are truncated to the capture limit', () => {
+    const instance = new VConsoleRemote({ autoConnect: false, maxBodyBytes: 1024 });
+
+    const huge = 'x'.repeat(500 * 1024);
+    const captured = instance._describeRequestBody(huge);
+
+    assert.ok(captured.length < 2048, `Capture must be bounded, got ${captured.length} chars`);
+    assert.ok(/truncated/.test(captured), 'Must say it was truncated');
+    assert.ok(/500\.0 KB/.test(captured), `Must report the original size, got tail: ${captured.slice(-80)}`);
+
+    instance.destroy();
+  });
+
+  // Test 12d: a base64 data URI becomes a summary instead of megabytes
+  test('Oversized data URIs are summarized, not transmitted', () => {
+    const instance = new VConsoleRemote({ autoConnect: false, maxBodyBytes: 1024 });
+
+    const dataUri = 'data:image/png;base64,' + 'A'.repeat(3 * 1024 * 1024);
+    const captured = instance._describeRequestBody(dataUri);
+
+    assert.ok(captured.startsWith('[data URI: image/png'), `Type must be reported, got: ${captured.slice(0, 60)}`);
+    assert.ok(/MB/.test(captured), 'Size must be reported');
+    assert.ok(!captured.includes('AAAA'), 'Payload itself must not be carried');
+
+    instance.destroy();
+  });
+
+  // Test 12e: binary and oversized responses are summarized from headers alone
+  test('Binary and oversized responses are not pulled into memory', () => {
+    const instance = new VConsoleRemote({ autoConnect: false, maxBodyBytes: 1024 });
+
+    const image = instance._summarizeResponseBody({ 'content-type': 'image/png', 'content-length': '204800' });
+    assert.ok(image && image.includes('Binary response') && image.includes('image/png'), `got: ${image}`);
+
+    const large = instance._summarizeResponseBody({ 'content-type': 'application/json', 'content-length': '999999' });
+    assert.ok(large && /exceeds/.test(large), `Oversized JSON must be skipped, got: ${large}`);
+
+    const normal = instance._summarizeResponseBody({ 'content-type': 'application/json', 'content-length': '512' });
+    assert.strictEqual(normal, null, 'Small JSON responses are read normally');
+
+    instance.destroy();
+  });
+
+  // Test 12f: a real multipart upload through patched fetch
+  await testAsync('A file upload through fetch is captured with file details', async () => {
+    global.window.fetch = async () => ({
+      status: 201,
+      headers: { forEach: (cb) => { cb('application/json', 'content-type'); } },
+      clone: () => ({ text: async () => '{"ok":true}' })
+    });
+
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    const fd = new FormData();
+    fd.append('avatar', new File([new Uint8Array(4096)], 'avatar.webp', { type: 'image/webp' }));
+
+    await window.fetch('/api/upload', { method: 'POST', body: fd });
+    await new Promise(r => setTimeout(r, 30));
+
+    const cached = [...instance._networkCache.values()].find(r => r.url.includes('/api/upload'));
+    assert.ok(cached, 'Upload must be captured');
+    assert.ok(cached.requestBody.includes('avatar.webp'), `File name expected, got: ${cached.requestBody}`);
+    assert.ok(cached.requestBody.includes('4.0 KB'), `File size expected, got: ${cached.requestBody}`);
+    assert.notStrictEqual(cached.requestBody, '{}', 'Must not degrade to an empty object');
+
+    instance.destroy();
+  });
+
   // Test 13: ESM bundle export verification
   await testAsync('ESM bundle exports VConsoleRemote', async () => {
     const esmModule = await import('../dist/vconsole-remote.esm.js');
