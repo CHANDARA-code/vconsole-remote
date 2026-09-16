@@ -29,7 +29,7 @@
     "web",
     "devtools"
   ],
-  "author": "chandara-code (https://github.com/chandara-code)",
+  "author": "chandara-code (https://github.com/CHANDARA-code)",
   "license": "MIT",
   "dependencies": {
     "qrcode": "^1.5.4",
@@ -43,13 +43,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/chandara-code/vconsole-remote.git",
+    "url": "git+https://github.com/CHANDARA-code/vconsole-remote.git",
     "directory": "packages/vconsole-remote"
   },
   "bugs": {
-    "url": "https://github.com/chandara-code/vconsole-remote/issues"
+    "url": "https://github.com/CHANDARA-code/vconsole-remote/issues"
   },
-  "homepage": "https://github.com/chandara-code/vconsole-remote#readme",
+  "homepage": "https://github.com/CHANDARA-code/vconsole-remote#readme",
   "publishConfig": {
     "access": "public",
     "provenance": true

@@ -90,6 +90,16 @@ check() {
 }
 check "$PUBLIC_URL/healthz" 200
 check "$PUBLIC_URL/" 200
+# Pages in the wild load the SDK from here, so a build that dropped the bundle
+# is a broken deploy even though the broker itself answers fine.
+check "$PUBLIC_URL/sdk.js" 200
+
+sdk_bytes=$(curl -s -m 30 -o /dev/null -w '%{size_download}' "$PUBLIC_URL/sdk.js" || echo 0)
+printf '  %-56s %s bytes\n' "$PUBLIC_URL/sdk.js (size)" "$sdk_bytes"
+if [ "$sdk_bytes" -lt 100000 ]; then
+  echo "  !! /sdk.js is too small to be the real bundle"
+  fail=1
+fi
 
 if [ "$fail" != "0" ]; then
   echo

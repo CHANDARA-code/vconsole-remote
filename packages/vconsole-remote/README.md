@@ -11,7 +11,20 @@ npm install vconsole-remote
 
 ### CDN
 ```html
-<script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vconsole-remote@1.0.0/dist/vconsole-remote.min.js"></script>
+```
+
+Pin the version — an unpinned URL follows `latest`, so a future publish changes
+what ships to your users' phones.
+
+### From the broker (no install)
+
+Every vConsole Remote broker serves this SDK at `/sdk.js`, built from the same
+commit as the broker itself, so the two can never speak different protocol
+versions:
+
+```html
+<script src="https://debug.leavchandara.com/sdk.js"></script>
 ```
 
 ## Usage
@@ -21,7 +34,7 @@ npm install vconsole-remote
 import VConsoleRemote from 'vconsole-remote';
 
 const vConsole = new VConsoleRemote({
-  server: 'wss://debug.yourcompany.com', // or local IP: ws://192.168.1.50:8080
+  server: 'wss://debug.leavchandara.com', // or your own broker, or ws://192.168.1.50:8080
   theme: 'dark',
   autoConnect: true,
 
@@ -32,15 +45,26 @@ const vConsole = new VConsoleRemote({
 });
 ```
 
-### With CDN
+### With a script tag
+
+Both the CDN build and the broker's `/sdk.js` expose the same `VConsoleRemote`
+global:
+
 ```html
-<script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"></script>
+<script src="https://debug.leavchandara.com/sdk.js"></script>
 <script>
   const vConsole = new window.VConsoleRemote({
-    server: 'wss://debug.yourcompany.com'
+    server: 'wss://debug.leavchandara.com'
   });
 </script>
 ```
+
+### Bundle formats
+
+`dist/vconsole-remote.min.js` is the minified UMD build (use this in
+production), `dist/vconsole-remote.js` the unminified UMD, and
+`dist/vconsole-remote.esm.js` the ES module entry bundlers resolve through the
+`module` field. `vconsole` and `qrcode` are bundled in — no peer dependencies.
 
 ## Features
 

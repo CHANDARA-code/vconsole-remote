@@ -1,13 +1,20 @@
-# The image needs only server/ sources: the dashboard is embedded into the Go
-# binary and the SDK ships over npm. Everything below is build-irrelevant.
+# The image builds two things: the client SDK bundle (from packages/) and the
+# Go binary that embeds it (from server/). Everything below is build-irrelevant.
 .git
 .github
 .agents
 docs
 test
-packages
-node_modules
+
+# Dependencies and build outputs are produced inside the image, never copied in.
+**/node_modules
+packages/vconsole-remote/dist
+packages/vconsole-remote/test
 server/vconsole-remote
+# Staged by scripts/build-sdk.sh for local runs; the sdk-builder stage
+# regenerates it, so a stale local copy must not enter the context.
+server/assets/sdk.js
+
 Dockerfile
 .dockerignore
 docker-compose.yml

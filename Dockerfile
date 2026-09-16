@@ -1,9 +1,23 @@
 # Multi-stage build for the vConsole Remote broker.
 #
-# The dashboard is compiled into the binary via Go's embed.FS, and the client
-# SDK ships separately over npm, so the image needs nothing but the Go build.
+# The dashboard and the client SDK are both compiled into the binary via Go's
+# embed.FS, so the image serves the dashboard, the WebSocket hub and /sdk.js
+# from one process with no runtime filesystem dependency.
 
-# Stage 1: Build the static Go binary with embedded assets
+# Stage 1: Build the client SDK bundle that the broker serves at /sdk.js
+FROM node:22-alpine AS sdk-builder
+
+WORKDIR /sdk
+
+# Manifests first, so the npm cache survives source-only changes
+COPY packages/vconsole-remote/package.json packages/vconsole-remote/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY packages/vconsole-remote/rollup.config.js ./
+COPY packages/vconsole-remote/src/ ./src/
+RUN npm run build
+
+# Stage 2: Build the static Go binary with embedded assets
 FROM golang:1.26-alpine AS go-builder
 
 WORKDIR /app
@@ -15,9 +29,12 @@ RUN go mod download
 COPY server/*.go ./
 COPY server/assets/ ./assets/
 
+# Staged as assets/sdk.js so embed.FS picks it up; see server/sdk.go.
+COPY --from=sdk-builder /sdk/dist/vconsole-remote.min.js ./assets/sdk.js
+
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o vconsole-remote .
 
-# Stage 2: Minimal runtime
+# Stage 3: Minimal runtime
 FROM alpine:3.24 AS runner
 
 LABEL org.opencontainers.image.title="vConsole Remote" \

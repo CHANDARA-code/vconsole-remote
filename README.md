@@ -68,6 +68,35 @@ Inspect mobile web apps, PWAs, and mini-apps live from any desktop browser with 
 
 ### 1. Client SDK Integration
 
+Three ways to load the SDK. They ship identical code — pick by how you want it
+delivered:
+
+| | Install | Version follows | Best for |
+|---|---|---|---|
+| **From the broker** | none | the broker you debug against | fastest start, guaranteed protocol match |
+| **npm** | `npm install vconsole-remote` | your lockfile | bundled apps |
+| **CDN** | none | the version you pin | a `<script>` tag without npm |
+
+#### From the broker (no install)
+
+Every broker serves the SDK at `/sdk.js`, compiled into the same binary that
+runs the WebSocket hub. Because both come from one build, the SDK can never
+speak a protocol the broker does not — the drift a pinned CDN copy develops
+after a broker upgrade is impossible here:
+
+```html
+<script src="https://debug.leavchandara.com/sdk.js"></script>
+<script>
+  const vConsole = new window.VConsoleRemote({
+    server: "wss://debug.leavchandara.com",
+  });
+</script>
+```
+
+Self-hosting? Serve it from your own broker — `https://your-broker/sdk.js` —
+and the same guarantee holds. The response carries an `ETag` and a one-hour
+`Cache-Control`, so repeat loads revalidate cheaply instead of re-downloading.
+
 #### Via npm
 
 ```bash
@@ -107,14 +136,26 @@ for the full default key list and exactly what each setting changes.
 
 #### Via CDN
 
+jsDelivr and unpkg both serve the published npm package:
+
 ```html
-<script src="https://cdn.jsdelivr.net/npm/vconsole-remote/dist/vconsole-remote.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vconsole-remote@1.0.0/dist/vconsole-remote.min.js"></script>
 <script>
   const vConsole = new window.VConsoleRemote({
     server: "wss://debug.leavchandara.com",
   });
 </script>
 ```
+
+Pin the version. An unpinned URL follows `latest`, so a future publish silently
+changes what ships to your users' phones — and unlike the `/sdk.js` route, a CDN
+copy has no way to stay in step with the broker you point it at.
+
+`dist/vconsole-remote.min.js` is the minified UMD build and the one to use in
+production; `dist/vconsole-remote.js` is the same bundle unminified, and
+`dist/vconsole-remote.esm.js` is the ES module entry that bundlers pick up
+through the `module` field. `vconsole` and `qrcode` are bundled in, so a single
+tag is self-sufficient — there are no peer dependencies to add.
 
 ---
 
