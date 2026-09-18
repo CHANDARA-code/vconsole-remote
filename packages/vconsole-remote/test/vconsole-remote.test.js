@@ -142,6 +142,7 @@ const mockDocument = {
 };
 
 // Setup global mock window
+const windowListeners = {};
 global.window = {
   location: { origin: 'http://localhost:3000' },
   innerWidth: 375,
@@ -149,9 +150,23 @@ global.window = {
   document: mockDocument,
   localStorage: new MockStorage(),
   sessionStorage: new MockStorage(),
-  addEventListener: () => {},
-  removeEventListener: () => {},
-  dispatchEvent: () => {},
+  _listeners: windowListeners,
+  addEventListener: (event, fn) => {
+    if (!windowListeners[event]) windowListeners[event] = [];
+    windowListeners[event].push(fn);
+  },
+  removeEventListener: (event, fn) => {
+    if (windowListeners[event]) {
+      const idx = windowListeners[event].indexOf(fn);
+      if (idx !== -1) windowListeners[event].splice(idx, 1);
+    }
+  },
+  dispatchEvent: (event) => {
+    const type = typeof event === 'string' ? event : event.type;
+    if (windowListeners[type]) {
+      windowListeners[type].slice().forEach(fn => fn(event));
+    }
+  },
   console: {
     log: () => {},
     info: () => {},
@@ -887,6 +902,382 @@ async function runTests() {
     assert.strictEqual(typeof esmModule.default, 'function', 'ESM must export VConsoleRemote class as default');
     const instance = new esmModule.default({ server: 'http://localhost:8080', autoConnect: false });
     assert.ok(instance instanceof esmModule.default);
+    instance.destroy();
+  });
+
+  // Test 14: Comprehensive Device Telemetry Collection (_collectTelemetry)
+  await testAsync('Comprehensive device telemetry collection gathers metrics and features', async () => {
+    // Setup mock navigator environment with connection and battery
+    const origNav = global.window.navigator;
+    global.window.navigator = {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+      onLine: true,
+      platform: 'iPhone',
+      hardwareConcurrency: 6,
+      deviceMemory: 4,
+      connection: {
+        effectiveType: '4g',
+        downlink: 10,
+        rtt: 50
+      },
+      getBattery: async () => ({
+        level: 0.85,
+        charging: false
+      })
+    };
+
+    const origScreen = global.window.screen;
+    global.window.screen = {
+      width: 393,
+      height: 852,
+      colorDepth: 24
+    };
+    global.window.devicePixelRatio = 3;
+    global.window.innerWidth = 393;
+    global.window.innerHeight = 750;
+
+    const instance = new VConsoleRemote({ autoConnect: false });
+    const telemetry = await instance._collectTelemetry();
+
+    // Verify OS
+    assert.strictEqual(telemetry.os.name, 'iOS');
+    assert.strictEqual(telemetry.os.version, '17.4');
+
+    // Verify Browser
+    assert.strictEqual(telemetry.browser.name, 'Safari');
+    assert.strictEqual(telemetry.browser.version, '17.4');
+    assert.strictEqual(telemetry.browser.engine, 'WebKit');
+
+    // Verify Screen
+    assert.strictEqual(telemetry.screen.width, 393);
+    assert.strictEqual(telemetry.screen.height, 852);
+    assert.strictEqual(telemetry.screen.dpr, 3);
+    assert.strictEqual(telemetry.screen.colorDepth, 24);
+
+    // Verify Viewport
+    assert.strictEqual(telemetry.viewport.width, 393);
+    assert.strictEqual(telemetry.viewport.height, 750);
+
+    // Verify Network
+    assert.strictEqual(telemetry.network.effectiveType, '4g');
+    assert.strictEqual(telemetry.network.downlink, 10);
+    assert.strictEqual(telemetry.network.rtt, 50);
+    assert.strictEqual(telemetry.network.online, true);
+
+    // Verify Battery
+    assert.strictEqual(telemetry.battery.supported, true);
+    assert.strictEqual(telemetry.battery.level, 85);
+    assert.strictEqual(telemetry.battery.charging, false);
+
+    // Verify Hardware
+    assert.strictEqual(telemetry.hardware.concurrency, 6);
+    assert.strictEqual(telemetry.hardware.memory, 4);
+    assert.strictEqual(telemetry.hardware.platform, 'iPhone');
+
+    // Verify Features
+    assert.strictEqual(typeof telemetry.features, 'object');
+    assert.strictEqual(telemetry.features.localStorage, true);
+    assert.strictEqual(telemetry.features.sessionStorage, true);
+    assert.strictEqual(telemetry.features.websocket, true);
+    assert.strictEqual(typeof telemetry.features.webgl, 'boolean');
+    assert.strictEqual(typeof telemetry.features.webrtc, 'boolean');
+    assert.strictEqual(typeof telemetry.features.indexedDB, 'boolean');
+    assert.strictEqual(typeof telemetry.features.serviceWorker, 'boolean');
+    assert.strictEqual(typeof telemetry.features.cookie, 'boolean');
+
+    // Verify Timestamp
+    assert.strictEqual(typeof telemetry.timestamp, 'number');
+    assert.ok(telemetry.timestamp > 0);
+
+    instance.destroy();
+    global.window.navigator = origNav;
+    global.window.screen = origScreen;
+  });
+
+  // Test 15: Safe fallbacks in non-supporting / older browsers & headless environments
+  await testAsync('Telemetry collection provides safe fallbacks when APIs are unavailable or throw', async () => {
+    const origNav = global.window.navigator;
+    // Simulate iOS Safari or older WebView where getBattery and connection are missing, and battery throws
+    global.window.navigator = {
+      userAgent: '',
+      onLine: false,
+      getBattery: () => Promise.reject(new Error('Permission denied'))
+    };
+
+    const origScreen = global.window.screen;
+    delete global.window.screen;
+
+    const instance = new VConsoleRemote({ autoConnect: false });
+    const telemetry = await instance._collectTelemetry();
+
+    // Fallbacks must be populated without crashing
+    assert.strictEqual(telemetry.os.name, 'Unknown');
+    assert.strictEqual(telemetry.os.version, '');
+    assert.strictEqual(telemetry.browser.name, 'Unknown');
+    assert.strictEqual(telemetry.browser.engine, 'Unknown');
+
+    assert.strictEqual(telemetry.screen.width, 0);
+    assert.strictEqual(telemetry.screen.height, 0);
+    assert.strictEqual(telemetry.screen.colorDepth, 24);
+
+    assert.strictEqual(telemetry.network.online, false);
+    assert.strictEqual(telemetry.network.effectiveType, 'unknown');
+    assert.strictEqual(telemetry.network.downlink, null);
+    assert.strictEqual(telemetry.network.rtt, null);
+
+    assert.strictEqual(telemetry.battery.supported, false);
+    assert.strictEqual(telemetry.battery.level, null);
+    assert.strictEqual(telemetry.battery.charging, null);
+
+    assert.strictEqual(telemetry.hardware.concurrency, null);
+    assert.strictEqual(telemetry.hardware.memory, null);
+    assert.strictEqual(telemetry.hardware.platform, '');
+
+    instance.destroy();
+    global.window.navigator = origNav;
+    global.window.screen = origScreen;
+  });
+
+  // Test 16: User-Agent OS and Browser Regex Matrix
+  test('UserAgent parsing handles Android Chrome, macOS Firefox, Windows Edge, Linux, and WeChat', () => {
+    const instance = new VConsoleRemote({ autoConnect: false });
+
+    // Android Chrome
+    const androidUa = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.94 Mobile Safari/537.36';
+    const androidParsed = instance._parseUserAgent(androidUa);
+    assert.strictEqual(androidParsed.os.name, 'Android');
+    assert.strictEqual(androidParsed.os.version, '14');
+    assert.strictEqual(androidParsed.browser.name, 'Chrome');
+    assert.strictEqual(androidParsed.browser.version, '122.0.6261.94');
+    assert.strictEqual(androidParsed.browser.engine, 'Blink');
+
+    // macOS Firefox
+    const macUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.3; rv:123.0) Gecko/20100101 Firefox/123.0';
+    const macParsed = instance._parseUserAgent(macUa);
+    assert.strictEqual(macParsed.os.name, 'macOS');
+    assert.strictEqual(macParsed.os.version, '14.3');
+    assert.strictEqual(macParsed.browser.name, 'Firefox');
+    assert.strictEqual(macParsed.browser.version, '123.0');
+    assert.strictEqual(macParsed.browser.engine, 'Gecko');
+
+    // Windows Edge
+    const winUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2365.92';
+    const winParsed = instance._parseUserAgent(winUa);
+    assert.strictEqual(winParsed.os.name, 'Windows');
+    assert.strictEqual(winParsed.os.version, '10.0');
+    assert.strictEqual(winParsed.browser.name, 'Edge');
+    assert.strictEqual(winParsed.browser.version, '122.0.2365.92');
+    assert.strictEqual(winParsed.browser.engine, 'Blink');
+
+    // WeChat
+    const wechatUa = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) Mobile/15E148 MicroMessenger/8.0.47';
+    const wechatParsed = instance._parseUserAgent(wechatUa);
+    assert.strictEqual(wechatParsed.os.name, 'iOS');
+    assert.strictEqual(wechatParsed.browser.name, 'WeChat');
+    assert.strictEqual(wechatParsed.browser.version, '8.0.47');
+
+    instance.destroy();
+  });
+
+  // Test 17: End-to-end latency responder (device_ping -> device_pong)
+  test('Inbound device_ping responds immediately with device_pong and echoes timestamp', () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    const pingTimestamp = 1726473600123;
+    ws.simulateReceive({
+      type: 'device_ping',
+      timestamp: pingTimestamp
+    });
+
+    const pong = ws.sentMessages.find(m => m.type === 'device_pong');
+    assert.ok(pong, 'device_pong message must be sent in response to device_ping');
+    assert.strictEqual(pong.timestamp, pingTimestamp, 'device_pong must echo the exact ping timestamp');
+
+    instance.destroy();
+  });
+
+  // Test 18: Inbound pull handlers (pull_device_info, pull_system)
+  await testAsync('Inbound pull_device_info and pull_system dispatch device_telemetry', async () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    // Simulate pull_device_info
+    ws.sentMessages = [];
+    ws.simulateReceive({ type: 'pull_device_info' });
+    await new Promise(r => setTimeout(r, 20));
+
+    let telemetryMsg = ws.sentMessages.find(m => m.type === 'device_telemetry');
+    assert.ok(telemetryMsg, 'device_telemetry must be sent in response to pull_device_info');
+    assert.ok(telemetryMsg.data && telemetryMsg.data.os, 'telemetry payload must contain os data');
+
+    // Simulate pull_system
+    ws.sentMessages = [];
+    ws.simulateReceive({ type: 'pull_system' });
+    await new Promise(r => setTimeout(r, 20));
+
+    telemetryMsg = ws.sentMessages.find(m => m.type === 'device_telemetry');
+    assert.ok(telemetryMsg, 'device_telemetry must be sent in response to pull_system');
+
+    instance.destroy();
+  });
+
+  // Test 19: Automatic telemetry transmission on dev_connected and room initialization (init)
+  await testAsync('Automatically sends device_telemetry when dev_connected or room init arrives', async () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    // Test on init / room_pin
+    ws.sentMessages = [];
+    ws.simulateReceive({ type: 'init', pin: '888999', key: 'testkey' });
+    await new Promise(r => setTimeout(r, 20));
+
+    let msg = ws.sentMessages.find(m => m.type === 'device_telemetry');
+    assert.ok(msg, 'device_telemetry must be sent when room initializes with init');
+
+    // Test on dev_connected
+    ws.sentMessages = [];
+    ws.simulateReceive({ type: 'dev_connected' });
+    await new Promise(r => setTimeout(r, 20));
+
+    msg = ws.sentMessages.find(m => m.type === 'device_telemetry');
+    assert.ok(msg, 'device_telemetry must be sent when dev_connected arrives');
+
+    instance.destroy();
+  });
+
+  // Test 20: Debounced window resize / orientationchange listener and cleanup in destroy()
+  await testAsync('Window resize is debounced at 250ms and listeners are removed on destroy()', async () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const ws = instance.ws;
+
+    // Verify listeners are registered in window._listeners
+    assert.ok(global.window._listeners && global.window._listeners['resize'] && global.window._listeners['resize'].length >= 1, 'Resize listener must be registered');
+    assert.ok(global.window._listeners && global.window._listeners['orientationchange'] && global.window._listeners['orientationchange'].length >= 1, 'Orientationchange listener must be registered');
+
+    // Trigger multiple resize events rapidly within 100ms
+    ws.sentMessages = [];
+    global.window.dispatchEvent({ type: 'resize' });
+    await new Promise(r => setTimeout(r, 50));
+    global.window.dispatchEvent({ type: 'resize' });
+    await new Promise(r => setTimeout(r, 50));
+    global.window.dispatchEvent({ type: 'resize' });
+
+    // Before 250ms has passed from the last trigger, no telemetry should be dispatched yet
+    let dispatched = ws.sentMessages.filter(m => m.type === 'device_telemetry');
+    assert.strictEqual(dispatched.length, 0, 'Must be debounced before 250ms window elapses');
+
+    // Wait until 250ms debounce window passes
+    await new Promise(r => setTimeout(r, 270));
+    dispatched = ws.sentMessages.filter(m => m.type === 'device_telemetry');
+    assert.strictEqual(dispatched.length, 1, 'Exactly one debounced device_telemetry dispatch must occur');
+
+    // Now test cleanup on destroy()
+    const resizeCountBefore = global.window._listeners['resize'].length;
+    instance.destroy();
+    const resizeCountAfter = (global.window._listeners['resize'] || []).length;
+    assert.strictEqual(resizeCountAfter, resizeCountBefore - 1, 'Resize listener must be removed on destroy()');
+
+    // Also assert that after destruction, dispatching resize does nothing
+    ws.sentMessages = [];
+    global.window.dispatchEvent({ type: 'resize' });
+    await new Promise(r => setTimeout(r, 300));
+    assert.strictEqual(ws.sentMessages.length, 0, 'No messages sent after destroy()');
+  });
+
+  // Test 21: VULN-01 Resilience against throwing window.navigator getter
+  await testAsync('Resilient to throwing window.navigator getter in _getNavigator and sendTelemetry', async () => {
+    const origNav = global.window.navigator;
+    const origGlobalNav = global.navigator;
+    try {
+      Object.defineProperty(global.window, 'navigator', {
+        get() {
+          throw new Error('SecurityError: Access to navigator is forbidden');
+        },
+        configurable: true
+      });
+      if (typeof global.navigator !== 'undefined') {
+        Object.defineProperty(global, 'navigator', {
+          get() {
+            throw new Error('SecurityError: Access to navigator is forbidden');
+          },
+          configurable: true
+        });
+      }
+
+      const instance = new VConsoleRemote({ autoConnect: false });
+      assert.strictEqual(instance._getNavigator(), null, '_getNavigator must return null when navigator getter throws');
+
+      // sendTelemetry must not throw synchronously and should resolve safely
+      let result = null;
+      assert.doesNotThrow(() => {
+        const p = instance.sendTelemetry();
+        assert.ok(p && typeof p.then === 'function', 'sendTelemetry must return a promise');
+      });
+      result = await instance.sendTelemetry();
+      assert.ok(result !== undefined, 'sendTelemetry should resolve safely');
+      instance.destroy();
+    } finally {
+      Object.defineProperty(global.window, 'navigator', { value: origNav, writable: true, configurable: true });
+      if (typeof origGlobalNav !== 'undefined') {
+        Object.defineProperty(global, 'navigator', { value: origGlobalNav, writable: true, configurable: true });
+      }
+    }
+  });
+
+  // Test 22: VULN-02 Resilience against throwing nav.userAgent getter
+  await testAsync('Resilient to throwing nav.userAgent getter in _collectTelemetry and sendTelemetry', async () => {
+    const origNav = global.window.navigator;
+    try {
+      const throwingNav = {
+        onLine: true,
+        getBattery: async () => ({ level: 0.5, charging: true })
+      };
+      Object.defineProperty(throwingNav, 'userAgent', {
+        get() {
+          throw new Error('SecurityError: Blocked userAgent access');
+        },
+        configurable: true
+      });
+      Object.defineProperty(global.window, 'navigator', { value: throwingNav, writable: true, configurable: true });
+
+      const instance = new VConsoleRemote({ autoConnect: false });
+      let telemetry = null;
+      await assert.doesNotReject(async () => {
+        telemetry = await instance._collectTelemetry();
+      }, 'Collecting telemetry must not reject when userAgent throws');
+      assert.ok(telemetry, 'Telemetry object must still be produced');
+      assert.strictEqual(telemetry.os.name, 'Unknown');
+
+      let sendRes = null;
+      await assert.doesNotReject(async () => {
+        sendRes = await instance.sendTelemetry();
+      }, 'sendTelemetry must safely resolve when userAgent throws');
+      assert.ok(sendRes, 'sendTelemetry returns collected telemetry');
+
+      instance.destroy();
+    } finally {
+      Object.defineProperty(global.window, 'navigator', { value: origNav, writable: true, configurable: true });
+    }
+  });
+
+  // Test 23: VULN-03 Resilience against non-string data.type in handleMessage
+  test('Resilient to non-string data.type in handleMessage without throwing TypeError', () => {
+    const instance = new VConsoleRemote({ autoConnect: true });
+    const nonStringTypes = [12345, true, false, {}, [], null, undefined, 0, -1, 3.14];
+
+    for (const badType of nonStringTypes) {
+      assert.doesNotThrow(() => {
+        instance.handleMessage({ type: badType });
+      }, `handleMessage must not throw for non-string type: ${typeof badType}`);
+    }
+
+    assert.doesNotThrow(() => {
+      instance.handleMessage(null);
+      instance.handleMessage(undefined);
+      instance.handleMessage("not-an-object");
+    }, 'handleMessage must safely ignore non-object values');
+
     instance.destroy();
   });
 

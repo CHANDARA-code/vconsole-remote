@@ -112,6 +112,8 @@ class VConsoleRemote {
     this._isLogging = false;
     this._destroyed = false;
     this._reconnectTimer = null;
+    this._resizeDebounceTimer = null;
+    this._onWindowResizeOrOrientation = null;
 
     // Preserved native globals
     this._originalConsole = null;
@@ -519,7 +521,10 @@ class VConsoleRemote {
     // 3. Register custom Remote tab plugin
     this._initVConsolePlugin();
 
-    // 4. Auto-connect WebSocket if enabled
+    // 4. Setup debounced resize & orientation telemetry listener
+    this._initTelemetryListeners();
+
+    // 5. Auto-connect WebSocket if enabled
     if (this.options.autoConnect) {
       this.connect();
     }
@@ -1501,7 +1506,8 @@ class VConsoleRemote {
   handleMessage(data) {
     if (!data || typeof data !== "object") return;
 
-    const msgType = (data.type || "").toLowerCase();
+    const msgType =
+      (typeof data.type === "string" ? data.type : "").toLowerCase();
 
     switch (msgType) {
       case "init":
@@ -1510,6 +1516,7 @@ class VConsoleRemote {
         this.roomKey = data.key || (data.message && data.message.key) || null;
         this.updatePinDisplay();
         this.updateConnectionStatus("Waiting for Developer 🟡");
+        this.sendTelemetry();
         break;
 
       case "auth_request":
@@ -1534,11 +1541,26 @@ class VConsoleRemote {
       case "dev_connected":
       case "room_connected":
         this.updateConnectionStatus("Developer Connected 🟢");
+        this.sendTelemetry();
         break;
 
       case "dev_disconnected":
         this._dismissAuthPrompt();
         this.updateConnectionStatus("Waiting for Developer 🟡");
+        break;
+
+      case "pull_device_info":
+      case "pull_system":
+      case "pull_system_info":
+      case "pull_device_telemetry":
+        this.sendTelemetry();
+        break;
+
+      case "device_ping":
+        this._send({
+          type: "device_pong",
+          timestamp: data.timestamp,
+        });
         break;
 
       case "pull_network_body":
@@ -2000,6 +2022,500 @@ class VConsoleRemote {
   }
 
   /**
+   * Register debounced window resize and orientationchange listener
+   */
+  _initTelemetryListeners() {
+    if (this._onWindowResizeOrOrientation) return;
+
+    this._onWindowResizeOrOrientation = () => {
+      if (this._destroyed) return;
+      if (this._resizeDebounceTimer) {
+        clearTimeout(this._resizeDebounceTimer);
+      }
+      this._resizeDebounceTimer = setTimeout(() => {
+        this._resizeDebounceTimer = null;
+        if (!this._destroyed) {
+          this.sendTelemetry();
+        }
+      }, 250);
+    };
+
+    if (
+      typeof window !== "undefined" &&
+      typeof window.addEventListener === "function"
+    ) {
+      window.addEventListener("resize", this._onWindowResizeOrOrientation);
+      window.addEventListener(
+        "orientationchange",
+        this._onWindowResizeOrOrientation,
+      );
+    }
+  }
+
+  /**
+   * Broadcast fresh device telemetry over WebSocket
+   */
+  sendTelemetry() {
+    if (this._destroyed) return Promise.resolve(null);
+    return Promise.resolve()
+      .then(() => this._collectTelemetry())
+      .then((telemetry) => {
+        if (this._destroyed) return null;
+        this._send({
+          type: "device_telemetry",
+          data: telemetry,
+        });
+        return telemetry;
+      })
+      .catch(() => null);
+  }
+
+  /**
+   * Backward-compatible alias for sendTelemetry
+   */
+  sendDeviceInfo() {
+    return this.sendTelemetry();
+  }
+
+  /**
+   * Safe accessor for navigator across browser and test environments
+   */
+  _getNavigator() {
+    try {
+      if (typeof window !== "undefined" && window.navigator) {
+        return window.navigator;
+      }
+    } catch (_) {}
+    try {
+      if (typeof navigator !== "undefined" && navigator) {
+        return navigator;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /**
+   * Parse OS and browser details from a userAgent string
+   */
+  _parseUserAgent(ua = "") {
+    let osName = "Unknown";
+    let osVersion = "";
+
+    if (/iPhone|iPad|iPod/i.test(ua)) {
+      osName = "iOS";
+      const m = ua.match(/(?:CPU OS|iPhone OS|OS)\s+([\d._]+)/i);
+      if (m && m[1]) {
+        osVersion = m[1].replace(/_/g, ".");
+      }
+    } else if (/Android/i.test(ua)) {
+      osName = "Android";
+      const m = ua.match(/Android\s+([\d.]+)/i);
+      if (m && m[1]) {
+        osVersion = m[1];
+      }
+    } else if (/Macintosh|Mac OS X/i.test(ua)) {
+      osName = "macOS";
+      const m = ua.match(/Mac OS X\s+([\d._]+)/i);
+      if (m && m[1]) {
+        osVersion = m[1].replace(/_/g, ".");
+      }
+    } else if (/Windows/i.test(ua)) {
+      osName = "Windows";
+      const m = ua.match(/Windows NT\s+([\d.]+)/i);
+      if (m && m[1]) {
+        osVersion = m[1];
+      }
+    } else if (/CrOS/i.test(ua)) {
+      osName = "Chrome OS";
+      const m = ua.match(/CrOS\s+[a-z0-9_]+\s+([\d.]+)/i);
+      if (m && m[1]) {
+        osVersion = m[1];
+      }
+    } else if (/HarmonyOS/i.test(ua)) {
+      osName = "HarmonyOS";
+      const m = ua.match(/HarmonyOS\/([\d.]+)/i);
+      if (m && m[1]) {
+        osVersion = m[1];
+      }
+    } else if (/Linux/i.test(ua)) {
+      osName = "Linux";
+    }
+
+    let engine = "Unknown";
+    if (/Trident|MSIE/i.test(ua)) {
+      engine = "Trident";
+    } else if (/Edge?\//i.test(ua) && !/Edg\//i.test(ua)) {
+      engine = "EdgeHTML";
+    } else if (/Chrome|Chromium|CriOS|Edg/i.test(ua)) {
+      engine = "Blink";
+    } else if (/Firefox|FxiOS/i.test(ua)) {
+      engine = "Gecko";
+    } else if (/AppleWebKit|Safari/i.test(ua)) {
+      engine = "WebKit";
+    }
+
+    let browserName = "Unknown";
+    let browserVersion = "";
+
+    if (/MicroMessenger\/([\d.]+)/i.test(ua)) {
+      browserName = "WeChat";
+      const m = ua.match(/MicroMessenger\/([\d.]+)/i);
+      if (m && m[1]) browserVersion = m[1];
+    } else if (/Edg(?:e|A|iOS)?\/([\d.]+)/i.test(ua)) {
+      browserName = "Edge";
+      const m = ua.match(/Edg(?:e|A|iOS)?\/([\d.]+)/i);
+      if (m && m[1]) browserVersion = m[1];
+    } else if (/SamsungBrowser\/([\d.]+)/i.test(ua)) {
+      browserName = "Samsung Internet";
+      const m = ua.match(/SamsungBrowser\/([\d.]+)/i);
+      if (m && m[1]) browserVersion = m[1];
+    } else if (/(?:OPR|Opera)\/([\d.]+)/i.test(ua)) {
+      browserName = "Opera";
+      const m = ua.match(/(?:OPR|Opera)\/([\d.]+)/i);
+      if (m && m[1]) browserVersion = m[1];
+    } else if (/(?:Chrome|CriOS)\/([\d.]+)/i.test(ua)) {
+      browserName = "Chrome";
+      const m = ua.match(/(?:Chrome|CriOS)\/([\d.]+)/i);
+      if (m && m[1]) browserVersion = m[1];
+    } else if (/Version\/([\d.]+).*?Safari/i.test(ua)) {
+      browserName = "Safari";
+      const m = ua.match(/Version\/([\d.]+).*?Safari/i);
+      if (m && m[1]) browserVersion = m[1];
+    } else if (/(?:Firefox|FxiOS)\/([\d.]+)/i.test(ua)) {
+      browserName = "Firefox";
+      const m = ua.match(/(?:Firefox|FxiOS)\/([\d.]+)/i);
+      if (m && m[1]) browserVersion = m[1];
+    } else if (/Safari\/([\d.]+)/i.test(ua)) {
+      browserName = "Safari";
+      const m = ua.match(/Safari\/([\d.]+)/i);
+      if (m && m[1]) browserVersion = m[1];
+    }
+
+    return {
+      os: { name: osName, version: osVersion },
+      browser: { name: browserName, version: browserVersion, engine },
+    };
+  }
+
+  /**
+   * Collect hardware screen specifications
+   */
+  _collectScreen() {
+    let width = 0;
+    let height = 0;
+    let dpr = 1;
+    let colorDepth = 24;
+
+    try {
+      if (typeof window !== "undefined") {
+        if (
+          typeof window.devicePixelRatio === "number" &&
+          !isNaN(window.devicePixelRatio)
+        ) {
+          dpr = window.devicePixelRatio;
+        }
+        if (window.screen) {
+          if (typeof window.screen.width === "number") {
+            width = window.screen.width;
+          }
+          if (typeof window.screen.height === "number") {
+            height = window.screen.height;
+          }
+          if (typeof window.screen.colorDepth === "number") {
+            colorDepth = window.screen.colorDepth;
+          }
+        }
+      }
+    } catch (_) {}
+
+    return { width, height, dpr, colorDepth };
+  }
+
+  /**
+   * Collect active viewport dimensions
+   */
+  _collectViewport() {
+    let width = 0;
+    let height = 0;
+
+    try {
+      if (typeof window !== "undefined") {
+        if (typeof window.innerWidth === "number") {
+          width = window.innerWidth;
+        } else if (
+          typeof document !== "undefined" &&
+          document.documentElement &&
+          typeof document.documentElement.clientWidth === "number"
+        ) {
+          width = document.documentElement.clientWidth;
+        }
+
+        if (typeof window.innerHeight === "number") {
+          height = window.innerHeight;
+        } else if (
+          typeof document !== "undefined" &&
+          document.documentElement &&
+          typeof document.documentElement.clientHeight === "number"
+        ) {
+          height = document.documentElement.clientHeight;
+        }
+      }
+    } catch (_) {}
+
+    return { width, height };
+  }
+
+  /**
+   * Collect network information and online state
+   */
+  _collectNetwork() {
+    const nav = this._getNavigator();
+    let online = true;
+    let effectiveType = "unknown";
+    let downlink = null;
+    let rtt = null;
+
+    try {
+      if (nav) {
+        online = nav.onLine !== false;
+        const conn =
+          nav.connection ||
+          nav.mozConnection ||
+          nav.webkitConnection;
+        if (conn) {
+          if (typeof conn.effectiveType === "string" && conn.effectiveType) {
+            effectiveType = conn.effectiveType;
+          }
+          if (typeof conn.downlink === "number") {
+            downlink = conn.downlink;
+          }
+          if (typeof conn.rtt === "number") {
+            rtt = conn.rtt;
+          }
+        }
+      }
+    } catch (_) {}
+
+    return { effectiveType, downlink, rtt, online };
+  }
+
+  /**
+   * Collect battery metrics asynchronously and defensively
+   */
+  async _collectBattery() {
+    const nav = this._getNavigator();
+    let supported = false;
+    let level = null;
+    let charging = null;
+
+    try {
+      if (
+        nav &&
+        typeof nav.getBattery === "function"
+      ) {
+        const b = await Promise.resolve(nav.getBattery()).catch(() => null);
+        if (b && typeof b === "object") {
+          supported = true;
+          if (typeof b.level === "number" && !isNaN(b.level)) {
+            level =
+              b.level >= 0 && b.level <= 1
+                ? Math.round(b.level * 100)
+                : Math.round(b.level);
+          }
+          if (typeof b.charging === "boolean") {
+            charging = b.charging;
+          }
+        }
+      }
+    } catch (_) {
+      supported = false;
+      level = null;
+      charging = null;
+    }
+
+    return { supported, level, charging };
+  }
+
+  /**
+   * Collect hardware specs (concurrency, memory, platform)
+   */
+  _collectHardware() {
+    const nav = this._getNavigator();
+    let concurrency = null;
+    let memory = null;
+    let platform = "";
+
+    try {
+      if (nav) {
+        if (typeof nav.hardwareConcurrency === "number") {
+          concurrency = nav.hardwareConcurrency;
+        }
+        if (typeof nav.deviceMemory === "number") {
+          memory = nav.deviceMemory;
+        }
+        if (typeof nav.platform === "string") {
+          platform = nav.platform;
+        }
+      }
+    } catch (_) {}
+
+    return { concurrency, memory, platform };
+  }
+
+  /**
+   * Detect client feature support matrix
+   */
+  _collectFeatures() {
+    let webgl = false;
+    let webrtc = false;
+    let indexedDB = false;
+    let serviceWorker = false;
+    let localStorage = false;
+    let sessionStorage = false;
+    let cookie = false;
+    let websocket = false;
+
+    try {
+      if (typeof window !== "undefined") {
+        // webgl
+        try {
+          if (
+            typeof document !== "undefined" &&
+            typeof document.createElement === "function"
+          ) {
+            const canvas = document.createElement("canvas");
+            if (canvas && typeof canvas.getContext === "function") {
+              const gl =
+                canvas.getContext("webgl") ||
+                canvas.getContext("experimental-webgl");
+              webgl = Boolean(gl);
+            }
+          }
+        } catch (_) {}
+
+        // webrtc
+        try {
+          webrtc = Boolean(
+            window.RTCPeerConnection ||
+              window.webkitRTCPeerConnection ||
+              window.mozRTCPeerConnection,
+          );
+        } catch (_) {}
+
+        // indexedDB
+        try {
+          indexedDB = Boolean(
+            window.indexedDB ||
+              window.mozIndexedDB ||
+              window.webkitIndexedDB ||
+              window.msIndexedDB,
+          );
+        } catch (_) {}
+
+        // serviceWorker
+        try {
+          const nav = this._getNavigator();
+          serviceWorker = Boolean(nav && "serviceWorker" in nav);
+        } catch (_) {}
+
+        // localStorage
+        try {
+          if (window.localStorage) {
+            const k = "__vcr_test__";
+            window.localStorage.setItem(k, "1");
+            window.localStorage.removeItem(k);
+            localStorage = true;
+          }
+        } catch (_) {}
+
+        // sessionStorage
+        try {
+          if (window.sessionStorage) {
+            const k = "__vcr_test__";
+            window.sessionStorage.setItem(k, "1");
+            window.sessionStorage.removeItem(k);
+            sessionStorage = true;
+          }
+        } catch (_) {}
+
+        // cookie
+        try {
+          const nav = this._getNavigator();
+          if (
+            nav &&
+            typeof nav.cookieEnabled === "boolean"
+          ) {
+            cookie = nav.cookieEnabled;
+          } else if (typeof document !== "undefined") {
+            cookie = typeof document.cookie === "string";
+          }
+        } catch (_) {}
+
+        // websocket
+        try {
+          websocket = typeof window.WebSocket === "function";
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return {
+      webgl,
+      webrtc,
+      indexedDB,
+      serviceWorker,
+      localStorage,
+      sessionStorage,
+      cookie,
+      websocket,
+    };
+  }
+
+  /**
+   * Comprehensive device telemetry collection
+   */
+  _collectTelemetry() {
+    let nav = null;
+    let ua = "";
+    try {
+      nav = this._getNavigator();
+      ua = (nav && nav.userAgent) || "";
+    } catch (_) {}
+    const parsedUa = this._parseUserAgent(ua);
+    const screen = this._collectScreen();
+    const viewport = this._collectViewport();
+    const network = this._collectNetwork();
+    const hardware = this._collectHardware();
+    const features = this._collectFeatures();
+    const timestamp = Date.now();
+
+    const syncBattery = { supported: false, level: null, charging: null };
+
+    const syncData = {
+      os: parsedUa.os,
+      browser: parsedUa.browser,
+      screen,
+      viewport,
+      network,
+      battery: syncBattery,
+      hardware,
+      features,
+      timestamp,
+    };
+
+    const promise = (async () => {
+      const battery = await this._collectBattery();
+      return {
+        ...syncData,
+        battery,
+      };
+    })();
+
+    Object.assign(promise, syncData);
+
+    return promise;
+  }
+
+  /**
    * Cleanup SDK instance, restoring all patched globals
    */
   destroy() {
@@ -2010,6 +2526,24 @@ class VConsoleRemote {
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
+    }
+
+    if (this._resizeDebounceTimer) {
+      clearTimeout(this._resizeDebounceTimer);
+      this._resizeDebounceTimer = null;
+    }
+
+    if (
+      typeof window !== "undefined" &&
+      typeof window.removeEventListener === "function" &&
+      this._onWindowResizeOrOrientation
+    ) {
+      window.removeEventListener("resize", this._onWindowResizeOrOrientation);
+      window.removeEventListener(
+        "orientationchange",
+        this._onWindowResizeOrOrientation,
+      );
+      this._onWindowResizeOrOrientation = null;
     }
 
     if (this.ws) {
