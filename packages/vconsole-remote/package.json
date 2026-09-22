@@ -36,10 +36,10 @@
     "vconsole": "^3.15.1"
   },
   "devDependencies": {
-    "@rollup/plugin-commonjs": "^25.0.7",
-    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-commonjs": "^29.0.3",
+    "@rollup/plugin-node-resolve": "^16.0.3",
     "@rollup/plugin-terser": "^1.0.0",
-    "rollup": "^4.24.0"
+    "rollup": "^4.63.4"
   },
   "repository": {
     "type": "git",
