@@ -5,7 +5,7 @@
 # from one process with no runtime filesystem dependency.
 
 # Stage 1: Build the client SDK bundle that the broker serves at /sdk.js
-FROM node:22-alpine AS sdk-builder
+FROM node:26-alpine AS sdk-builder
 
 WORKDIR /sdk
 
