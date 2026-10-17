@@ -240,7 +240,7 @@ jobs:
       # One upload for all three. Running this per-matrix-leg raced three
       # concurrent writes against the same release.
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           files: server/vconsole-remote-*
