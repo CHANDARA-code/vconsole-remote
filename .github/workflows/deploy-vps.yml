@@ -27,7 +27,7 @@ jobs:
       # itself acts on the live checkout elsewhere on disk — running it from the
       # workspace avoids bash re-reading the file while git rewrites it.
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Deploy
         run: ./scripts/deploy.sh
